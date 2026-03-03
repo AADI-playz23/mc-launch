@@ -1,0 +1,47 @@
+name: LunarHost Ephemeral Node
+
+on:
+  workflow_dispatch:
+    inputs:
+      username:
+        description: 'Username of the server to launch'
+        required: true
+        default: 'gamer123'
+  repository_dispatch:
+    types: [renew_server]
+
+jobs:
+  run-server:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code Engine (Repo 1)
+        uses: actions/checkout@v4
+
+      - name: Checkout Database & World (Repo 2)
+        uses: actions/checkout@v4
+        with:
+          repository: YOUR-GITHUB-NAME/lunarhost-db # Replace with your Repo 2 name
+          token: ${{ secrets.LUNAR_DB_TOKEN }}
+          path: repo2
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Run LunarHost Core
+        env:
+          USERNAME: ${{ github.event.inputs.username || github.event.client_payload.username }}
+        run: |
+          chmod +x launch.sh
+          ./launch.sh
+
+      - name: Trigger Next Cycle
+        if: always()
+        run: |
+          # This API call tells GitHub to immediately start a new runner right as this one dies
+          curl -X POST https://api.github.com/repos/${{ github.repository }}/dispatches \
+          -H "Accept: application/vnd.github.v3+json" \
+          -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          -d '{"event_type": "renew_server", "client_payload": {"username": "${{ github.event.inputs.username || github.event.client_payload.username }}"}}'
