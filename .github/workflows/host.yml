@@ -14,110 +14,96 @@ jobs:
   run-server:
     runs-on: ubuntu-latest
     steps:
-      - name: Setup Node
+      - name: Setup Node & Java 21
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          
-      - name: Setup Java 21
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '21'
 
-      # VERIFICATION: Checking if Java 21 installed correctly
-      - name: Verify Java Version
-        run: |
-          echo "Checking active Java version..."
-          java -version
-
-      - name: Checkout Orchestrator (mc-launch)
+      - name: Checkout Orchestrator
         uses: actions/checkout@v4
         with:
           path: orchestrator
 
-      - name: Download Storage (mc-disk2) & Setup Engine (mc-disk)
+      - name: Download Storage & Engine
         run: |
           git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git engine
           git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git storage
-          
           mkdir -p server-env
-          cp -r storage/${{ github.event.inputs.username }}/* server-env/ || echo "New user. Starting fresh."
+          cp -r storage/${{ github.event.inputs.username }}/* server-env/ || echo "New user."
 
-      - name: Fetch Latest PaperMC Engine
+      - name: Fetch Latest Engine
         run: |
           VERSION=${{ github.event.inputs.version }}
-          echo "Looking up Paper URL for Minecraft $VERSION from mc-launch..."
-          
-          # Read the versions.json file directly from the mc-launch (orchestrator) folder
           DOWNLOAD_URL=$(jq -r ".versions[\"$VERSION\"]" orchestrator/versions.json)
-          
-          if [ "$DOWNLOAD_URL" == "null" ] || [ -z "$DOWNLOAD_URL" ]; then
-            echo "Error: Version $VERSION not found in versions.json!"
-            exit 1
-          fi
-          
-          echo "Downloading engine from: $DOWNLOAD_URL"
-          
-          # RENAMING: This downloads the Paper jar and forces the name to server.jar
           wget -O server-env/server.jar "$DOWNLOAD_URL"
 
-      - name: Install Bore & Orchestrator Dependencies
-        env:
-          GITHUB_TOKEN: ${{ secrets.ABSORA_PAT }}
+      - name: Install Tunnels (Bore & Cloudflared)
         run: |
+          # Install Bore
           wget https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz
           tar -xzf bore-*.tar.gz
           sudo mv bore /usr/local/bin/
           
-          cd orchestrator
-          npm install @octokit/rest
+          # Install Cloudflare Quick Tunnels
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared-linux-amd64.deb
 
-      - name: Start Network Tunnel
-        env:
-          GITHUB_TOKEN: ${{ secrets.ABSORA_PAT }}
+      - name: Establish Dual Tunnels & Publish IPs
         run: |
-          cd orchestrator
-          node tunnel.js ${{ github.event.inputs.username }} &
-          sleep 5
+          # Start Bore (Port 25565) and Cloudflared (Port 8080) in the background
+          bore local 25565 --to bore.pub > bore.log 2>&1 &
+          cloudflared tunnel --url http://localhost:8080 > cloudflared.log 2>&1 &
+          
+          echo "Waiting 8 seconds for tunnels to establish secure connections..."
+          sleep 8
+          
+          # Extract the dynamic URLs
+          BORE_IP=$(grep -oE 'bore.pub:[0-9]+' bore.log | head -1)
+          CF_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' cloudflared.log | head -1 | sed 's/https/wss/')
+          
+          echo "Minecraft IP: $BORE_IP"
+          echo "Console WSS: $CF_URL"
+          
+          # Write as JSON to mc-disk
+          cd engine
+          mkdir -p ip
+          echo "{\"ip\": \"$BORE_IP\", \"ws\": \"$CF_URL\"}" > ip/${{ github.event.inputs.username }}.json
+          
+          git config user.name "LunarHost Engine"
+          git config user.email "engine@lunarhost.com"
+          git add ip/
+          git commit -m "Endpoints generated for ${{ github.event.inputs.username }}" || echo "No changes"
+          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git HEAD:main
 
-      - name: Start Minecraft via WebSocket Wrapper
+      - name: Ignite Server Core
         run: |
           cd server-env
           echo "eula=true" > eula.txt
-          cp ../orchestrator/wrapper.js .
-          
-          # FIX: Install the ws module directly inside the server folder
+          cp ../orchestrator/server.js .
           npm install ws
-          
-          echo "Booting JVM with Java 21 and Aikar's Flags..."
-          node wrapper.js ${{ github.event.inputs.username }}
+          node server.js ${{ github.event.inputs.username }}
 
-      - name: Save World Data & Clean IP (mc-disk2 & mc-disk)
+      - name: Save Data & Clean Endpoints
         if: always()
         run: |
-          # 1. Clean up temporary engine files and Node modules before saving
-          rm -f server-env/server.jar 
-          rm -f server-env/wrapper.js
-          rm -rf server-env/node_modules
-          rm -f server-env/package.json
-          rm -f server-env/package-lock.json
+          rm -f server-env/server.jar server-env/server.js
+          rm -rf server-env/node_modules server-env/package.json server-env/package-lock.json
           
           mkdir -p storage/${{ github.event.inputs.username }}
           cp -r server-env/* storage/${{ github.event.inputs.username }}/
-          
           cd storage
-          git config user.name "LunarHost Engine"
+          git config user.name "LunarHost"
           git config user.email "engine@lunarhost.com"
           git add .
-          git commit -m "Save session for ${{ github.event.inputs.username }}" || echo "No changes."
-          git push
+          git commit -m "Save session for ${{ github.event.inputs.username }}" || echo "No changes"
+          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main
 
-          # 2. Delete the IP file to mark server as offline
           cd ../engine
-          git config user.name "LunarHost Engine"
-          git config user.email "engine@lunarhost.com"
-          rm -f ip/${{ github.event.inputs.username }}.txt
+          rm -f ip/${{ github.event.inputs.username }}.json
           git add .
-          git commit -m "Server offline: remove IP for ${{ github.event.inputs.username }}" || echo "Already removed."
-          git push
+          git commit -m "Server offline: scrub IP for ${{ github.event.inputs.username }}" || echo "Already removed"
+          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git HEAD:main
