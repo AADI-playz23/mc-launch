@@ -8,9 +8,23 @@ const username = process.argv[2] || 'Pilot';
 const wss = new WebSocket.Server({ port: 8080 });
 let activeClients = [];
 
+// NEW: Log Buffer so users don't miss logs when Cloudflare auto-reconnects
+const MAX_LOG_HISTORY = 50; 
+let logHistory = [];
+
 wss.on('connection', (ws) => {
     activeClients.push(ws);
     console.log("[LunarHost] Web Dashboard connected to telemetry stream.");
+
+    // Send the past logs to the dashboard the moment it reconnects
+    if (logHistory.length > 0) {
+        ws.send(JSON.stringify({ text: logHistory.join('') }));
+    }
+
+    // NEW: Catch sudden drops so they don't crash the Minecraft server!
+    ws.on('error', (error) => {
+        // Silently catch the error. The frontend will auto-reconnect.
+    });
 
     ws.on('message', (message) => {
         try {
@@ -27,6 +41,13 @@ wss.on('connection', (ws) => {
 });
 
 const broadcast = (text) => {
+    // Save to history buffer
+    logHistory.push(text);
+    if (logHistory.length > MAX_LOG_HISTORY) {
+        logHistory.shift(); // Remove the oldest log to prevent RAM bloat
+    }
+
+    // Send to all connected web dashboards
     activeClients.forEach(ws => {
         if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ text: text }));
