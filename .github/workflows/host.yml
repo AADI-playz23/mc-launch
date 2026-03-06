@@ -1,4 +1,4 @@
-name: AbsoraCloud Engine
+name: LunarHost Engine
 on:
   workflow_dispatch:
     inputs:
@@ -8,33 +8,59 @@ on:
       version:
         description: 'Minecraft version to load'
         required: true
-        default: '1.20.4'
+        default: '1.21.5'
 
 jobs:
   run-server:
     runs-on: ubuntu-latest
     steps:
-      - name: Setup Java & Node
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - uses: actions/setup-java@v4
+          
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '21'
+
+      # VERIFICATION: Checking if Java 21 installed correctly
+      - name: Verify Java Version
+        run: |
+          echo "Checking active Java version..."
+          java -version
 
       - name: Checkout Orchestrator (mc-launch)
         uses: actions/checkout@v4
         with:
           path: orchestrator
 
-      - name: Download Engine (mc-disk) & Storage (mc-disk2)
+      - name: Download Storage (mc-disk2) & Setup Engine (mc-disk)
         run: |
-          git clone https://${{ secrets.ABSORA_PAT }}@github.com/Absora-Studio/mc-disk.git engine
-          git clone https://${{ secrets.ABSORA_PAT }}@github.com/Absora-Studio/mc-disk2.git storage
+          git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git engine
+          git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git storage
+          
           mkdir -p server-env
-          cp -r storage/${{ github.event.inputs.username }}/* server-env/ || echo "New user."
-          cp engine/versions/${{ github.event.inputs.version }}/server.jar server-env/
+          cp -r storage/${{ github.event.inputs.username }}/* server-env/ || echo "New user. Starting fresh."
+
+      - name: Fetch Latest PaperMC Engine
+        run: |
+          VERSION=${{ github.event.inputs.version }}
+          echo "Looking up Paper URL for Minecraft $VERSION from mc-launch..."
+          
+          # Read the versions.json file directly from the mc-launch (orchestrator) folder
+          DOWNLOAD_URL=$(jq -r ".versions[\"$VERSION\"]" orchestrator/versions.json)
+          
+          if [ "$DOWNLOAD_URL" == "null" ] || [ -z "$DOWNLOAD_URL" ]; then
+            echo "Error: Version $VERSION not found in versions.json!"
+            exit 1
+          fi
+          
+          echo "Downloading engine from: $DOWNLOAD_URL"
+          
+          # RENAMING: This downloads the Paper jar and forces the name to server.jar
+          wget -O server-env/server.jar "$DOWNLOAD_URL"
 
       - name: Install Bore & Dependencies
         env:
@@ -58,8 +84,9 @@ jobs:
         run: |
           cd server-env
           echo "eula=true" > eula.txt
-          # Copy wrapper from orchestrator to server folder
           cp ../orchestrator/wrapper.js .
+          
+          echo "Booting JVM with Java 21 and Aikar's Flags..."
           node wrapper.js ${{ github.event.inputs.username }}
 
       - name: Save World Data & Clean IP (mc-disk2 & mc-disk)
@@ -71,16 +98,16 @@ jobs:
           mkdir -p storage/${{ github.event.inputs.username }}
           cp -r server-env/* storage/${{ github.event.inputs.username }}/
           cd storage
-          git config user.name "AbsoraCloud Engine"
-          git config user.email "engine@absorastudio.com"
+          git config user.name "LunarHost Engine"
+          git config user.email "engine@lunarhost.com"
           git add .
           git commit -m "Save session for ${{ github.event.inputs.username }}" || echo "No changes."
           git push
 
           # 2. Delete the IP file to mark server as offline
           cd ../engine
-          git config user.name "AbsoraCloud Engine"
-          git config user.email "engine@absorastudio.com"
+          git config user.name "LunarHost Engine"
+          git config user.email "engine@lunarhost.com"
           rm -f ip/${{ github.event.inputs.username }}.txt
           git add .
           git commit -m "Server offline: remove IP for ${{ github.event.inputs.username }}" || echo "Already removed."
