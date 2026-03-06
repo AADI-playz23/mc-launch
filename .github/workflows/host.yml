@@ -8,7 +8,7 @@ on:
       version:
         description: 'Minecraft version to load'
         required: true
-        default: '1.21.5'
+        default: '1.21.11'
 
 jobs:
   run-server:
@@ -62,15 +62,16 @@ jobs:
           # RENAMING: This downloads the Paper jar and forces the name to server.jar
           wget -O server-env/server.jar "$DOWNLOAD_URL"
 
-      - name: Install Bore & Dependencies
+      - name: Install Bore & Orchestrator Dependencies
         env:
           GITHUB_TOKEN: ${{ secrets.ABSORA_PAT }}
         run: |
           wget https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz
           tar -xzf bore-*.tar.gz
           sudo mv bore /usr/local/bin/
+          
           cd orchestrator
-          npm install ws @octokit/rest
+          npm install @octokit/rest
 
       - name: Start Network Tunnel
         env:
@@ -86,17 +87,25 @@ jobs:
           echo "eula=true" > eula.txt
           cp ../orchestrator/wrapper.js .
           
+          # FIX: Install the ws module directly inside the server folder
+          npm install ws
+          
           echo "Booting JVM with Java 21 and Aikar's Flags..."
           node wrapper.js ${{ github.event.inputs.username }}
 
       - name: Save World Data & Clean IP (mc-disk2 & mc-disk)
         if: always()
         run: |
-          # 1. Save World Data
+          # 1. Clean up temporary engine files and Node modules before saving
           rm -f server-env/server.jar 
           rm -f server-env/wrapper.js
+          rm -rf server-env/node_modules
+          rm -f server-env/package.json
+          rm -f server-env/package-lock.json
+          
           mkdir -p storage/${{ github.event.inputs.username }}
           cp -r server-env/* storage/${{ github.event.inputs.username }}/
+          
           cd storage
           git config user.name "LunarHost Engine"
           git config user.email "engine@lunarhost.com"
