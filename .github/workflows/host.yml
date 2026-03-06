@@ -1,0 +1,87 @@
+name: AbsoraCloud Engine
+on:
+  workflow_dispatch:
+    inputs:
+      username:
+        description: 'The user starting the server'
+        required: true
+      version:
+        description: 'Minecraft version to load'
+        required: true
+        default: '1.20.4'
+
+jobs:
+  run-server:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Java & Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Checkout Orchestrator (mc-launch)
+        uses: actions/checkout@v4
+        with:
+          path: orchestrator
+
+      - name: Download Engine (mc-disk) & Storage (mc-disk2)
+        run: |
+          git clone https://${{ secrets.ABSORA_PAT }}@github.com/Absora-Studio/mc-disk.git engine
+          git clone https://${{ secrets.ABSORA_PAT }}@github.com/Absora-Studio/mc-disk2.git storage
+          mkdir -p server-env
+          cp -r storage/${{ github.event.inputs.username }}/* server-env/ || echo "New user."
+          cp engine/versions/${{ github.event.inputs.version }}/server.jar server-env/
+
+      - name: Install Bore & Dependencies
+        env:
+          GITHUB_TOKEN: ${{ secrets.ABSORA_PAT }}
+        run: |
+          wget https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz
+          tar -xzf bore-*.tar.gz
+          sudo mv bore /usr/local/bin/
+          cd orchestrator
+          npm install ws @octokit/rest
+
+      - name: Start Network Tunnel
+        env:
+          GITHUB_TOKEN: ${{ secrets.ABSORA_PAT }}
+        run: |
+          cd orchestrator
+          node tunnel.js ${{ github.event.inputs.username }} &
+          sleep 5
+
+      - name: Start Minecraft via WebSocket Wrapper
+        run: |
+          cd server-env
+          echo "eula=true" > eula.txt
+          # Copy wrapper from orchestrator to server folder
+          cp ../orchestrator/wrapper.js .
+          node wrapper.js ${{ github.event.inputs.username }}
+
+      - name: Save World Data & Clean IP (mc-disk2 & mc-disk)
+        if: always()
+        run: |
+          # 1. Save World Data
+          rm -f server-env/server.jar 
+          rm -f server-env/wrapper.js
+          mkdir -p storage/${{ github.event.inputs.username }}
+          cp -r server-env/* storage/${{ github.event.inputs.username }}/
+          cd storage
+          git config user.name "AbsoraCloud Engine"
+          git config user.email "engine@absorastudio.com"
+          git add .
+          git commit -m "Save session for ${{ github.event.inputs.username }}" || echo "No changes."
+          git push
+
+          # 2. Delete the IP file to mark server as offline
+          cd ../engine
+          git config user.name "AbsoraCloud Engine"
+          git config user.email "engine@absorastudio.com"
+          rm -f ip/${{ github.event.inputs.username }}.txt
+          git add .
+          git commit -m "Server offline: remove IP for ${{ github.event.inputs.username }}" || echo "Already removed."
+          git push
