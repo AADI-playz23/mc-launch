@@ -1,4 +1,4 @@
-name: LunarHost Engine
+name: AstroCore Engine
 on:
   workflow_dispatch:
     inputs:
@@ -41,40 +41,55 @@ jobs:
           DOWNLOAD_URL=$(jq -r ".versions[\"$VERSION\"]" orchestrator/versions.json)
           wget -O server-env/server.jar "$DOWNLOAD_URL"
 
-      - name: Install Tunnels (Bore & Cloudflared)
+      - name: Install Tunnels
         run: |
-          # Install Bore
           wget https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz
           tar -xzf bore-*.tar.gz
           sudo mv bore /usr/local/bin/
           
-          # Install Cloudflare Quick Tunnels
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
 
-      - name: Establish Dual Tunnels & Publish IPs
+      - name: Establish Dual Tunnels & Publish Static IPs
         run: |
-          # Start Bore (Port 25565) and Cloudflared (Port 8080) in the background
           bore local 25565 --to bore.pub > bore.log 2>&1 &
           cloudflared tunnel --url http://localhost:8080 > cloudflared.log 2>&1 &
           
-          echo "Waiting 8 seconds for tunnels to establish secure connections..."
+          echo "Waiting for tunnels to stabilize..."
           sleep 8
           
-          # Extract the dynamic URLs
+          # Extract endpoints
           BORE_IP=$(grep -oE 'bore.pub:[0-9]+' bore.log | head -1)
+          BORE_PORT=$(echo $BORE_IP | cut -d':' -f2)
           CF_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' cloudflared.log | head -1 | sed 's/https/wss/')
           
-          echo "Minecraft IP: $BORE_IP"
-          echo "Console WSS: $CF_URL"
+          echo "Updating Cloudflare DNS for ${{ secrets.CF_DOMAIN }} to port $BORE_PORT..."
           
-          # Write as JSON to mc-disk
+          # 1. Ask Cloudflare for the ID of the SRV record
+          RECORD_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/dns_records?type=SRV&name=_minecraft._tcp.${{ secrets.CF_DOMAIN }}" \
+            -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" \
+            -H "Content-Type: application/json" | jq -r '.result[0].id')
+            
+          # 2. If the record exists, UPDATE it. If not, CREATE it.
+          if [ "$RECORD_ID" != "null" ] && [ -n "$RECORD_ID" ]; then
+             curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/dns_records/$RECORD_ID" \
+                  -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" \
+                  -H "Content-Type: application/json" \
+                  --data '{"type":"SRV","name":"_minecraft._tcp.${{ secrets.CF_DOMAIN }}","data":{"service":"_minecraft","proto":"_tcp","name":"${{ secrets.CF_DOMAIN }}","priority":0,"weight":0,"port":'$BORE_PORT',"target":"bore.pub"}}'
+          else
+             curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/dns_records" \
+                  -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" \
+                  -H "Content-Type: application/json" \
+                  --data '{"type":"SRV","name":"_minecraft._tcp.${{ secrets.CF_DOMAIN }}","data":{"service":"_minecraft","proto":"_tcp","name":"${{ secrets.CF_DOMAIN }}","priority":0,"weight":0,"port":'$BORE_PORT',"target":"bore.pub"}}'
+          fi
+          
+          # Push internal JSON for web dashboard UI (Shows the static domain to the user)
           cd engine
           mkdir -p ip
-          echo "{\"ip\": \"$BORE_IP\", \"ws\": \"$CF_URL\"}" > ip/${{ github.event.inputs.username }}.json
+          echo "{\"ip\": \"${{ secrets.CF_DOMAIN }}\", \"ws\": \"$CF_URL\"}" > ip/${{ github.event.inputs.username }}.json
           
-          git config user.name "LunarHost Engine"
-          git config user.email "engine@lunarhost.com"
+          git config user.name "AstroCore Engine"
+          git config user.email "engine@astrocore.com"
           git add ip/
           git commit -m "Endpoints generated for ${{ github.event.inputs.username }}" || echo "No changes"
           git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git HEAD:main
@@ -93,11 +108,16 @@ jobs:
           rm -f server-env/server.jar server-env/server.js
           rm -rf server-env/node_modules server-env/package.json server-env/package-lock.json
           
-          mkdir -p storage/${{ github.event.inputs.username }}
-          cp -r server-env/* storage/${{ github.event.inputs.username }}/
           cd storage
-          git config user.name "LunarHost"
-          git config user.email "engine@lunarhost.com"
+          git config user.name "AstroCore Engine"
+          git config user.email "engine@astrocore.com"
+          
+          # Pull any files the user uploaded via File Manager during runtime!
+          git pull https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git main --rebase || true
+          
+          mkdir -p ${{ github.event.inputs.username }}
+          cp -r ../server-env/* ${{ github.event.inputs.username }}/
+          
           git add .
           git commit -m "Save session for ${{ github.event.inputs.username }}" || echo "No changes"
           git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main
