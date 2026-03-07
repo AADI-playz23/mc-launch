@@ -9,6 +9,10 @@ on:
         description: 'Minecraft version to load'
         required: true
         default: '1.21.11'
+      servername:
+        description: 'Custom subdomain for the server'
+        required: true
+        default: 'play'
 
 jobs:
   run-server:
@@ -63,30 +67,46 @@ jobs:
           BORE_PORT=$(echo $BORE_IP | cut -d':' -f2)
           CF_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' cloudflared.log | head -1 | sed 's/https/wss/')
           
-          echo "Updating Cloudflare DNS for ${{ secrets.CF_DOMAIN }} to port $BORE_PORT..."
+          FULL_DOMAIN="${{ github.event.inputs.servername }}.${{ secrets.CF_DOMAIN }}"
           
-          # 1. Ask Cloudflare for the ID of the SRV record
-          RECORD_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/dns_records?type=SRV&name=_minecraft._tcp.${{ secrets.CF_DOMAIN }}" \
+          echo "Updating Cloudflare DNS for $FULL_DOMAIN to port $BORE_PORT..."
+          
+          JSON_DATA=$(cat <<EOF
+          {
+            "type": "SRV",
+            "name": "_minecraft._tcp.$FULL_DOMAIN",
+            "data": {
+              "service": "_minecraft",
+              "proto": "_tcp",
+              "name": "$FULL_DOMAIN",
+              "priority": 0,
+              "weight": 0,
+              "port": $BORE_PORT,
+              "target": "bore.pub"
+            }
+          }
+          EOF
+          )
+          
+          RECORD_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/dns_records?type=SRV&name=_minecraft._tcp.$FULL_DOMAIN" \
             -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" \
             -H "Content-Type: application/json" | jq -r '.result[0].id')
             
-          # 2. If the record exists, UPDATE it. If not, CREATE it.
           if [ "$RECORD_ID" != "null" ] && [ -n "$RECORD_ID" ]; then
              curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/dns_records/$RECORD_ID" \
                   -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" \
                   -H "Content-Type: application/json" \
-                  --data '{"type":"SRV","name":"_minecraft._tcp.${{ secrets.CF_DOMAIN }}","data":{"service":"_minecraft","proto":"_tcp","name":"${{ secrets.CF_DOMAIN }}","priority":0,"weight":0,"port":'$BORE_PORT',"target":"bore.pub"}}'
+                  -d "$JSON_DATA"
           else
              curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/dns_records" \
                   -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" \
                   -H "Content-Type: application/json" \
-                  --data '{"type":"SRV","name":"_minecraft._tcp.${{ secrets.CF_DOMAIN }}","data":{"service":"_minecraft","proto":"_tcp","name":"${{ secrets.CF_DOMAIN }}","priority":0,"weight":0,"port":'$BORE_PORT',"target":"bore.pub"}}'
+                  -d "$JSON_DATA"
           fi
           
-          # Push internal JSON for web dashboard UI (Shows the static domain to the user)
           cd engine
           mkdir -p ip
-          echo "{\"ip\": \"${{ secrets.CF_DOMAIN }}\", \"ws\": \"$CF_URL\"}" > ip/${{ github.event.inputs.username }}.json
+          echo "{\"ip\": \"$FULL_DOMAIN\", \"ws\": \"$CF_URL\"}" > ip/${{ github.event.inputs.username }}.json
           
           git config user.name "AstroCore Engine"
           git config user.email "engine@astrocore.com"
@@ -112,7 +132,6 @@ jobs:
           git config user.name "AstroCore Engine"
           git config user.email "engine@astrocore.com"
           
-          # Pull any files the user uploaded via File Manager during runtime!
           git pull https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git main --rebase || true
           
           mkdir -p ${{ github.event.inputs.username }}
