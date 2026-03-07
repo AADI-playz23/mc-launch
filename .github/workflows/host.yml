@@ -1,4 +1,4 @@
-name: AstroCore Engine
+name: Absora Engine
 on:
   workflow_dispatch:
     inputs:
@@ -13,6 +13,10 @@ on:
         description: 'Custom subdomain for the server'
         required: true
         default: 'play'
+      ram:
+        description: 'RAM Allocation'
+        required: true
+        default: '4G'
 
 jobs:
   run-server:
@@ -62,7 +66,6 @@ jobs:
           echo "Waiting for tunnels to stabilize..."
           sleep 15
           
-          
           # Extract endpoints
           BORE_IP=$(grep -oE 'bore.pub:[0-9]+' bore.log | head -1)
           BORE_PORT=$(echo $BORE_IP | cut -d':' -f2)
@@ -109,8 +112,8 @@ jobs:
           mkdir -p ip
           echo "{\"ip\": \"$FULL_DOMAIN\", \"ws\": \"$CF_URL\"}" > ip/${{ github.event.inputs.username }}.json
           
-          git config user.name "AstroCore Engine"
-          git config user.email "engine@astrocore.com"
+          git config user.name "Absora Engine"
+          git config user.email "engine@absora.com"
           git add ip/
           git commit -m "Endpoints generated for ${{ github.event.inputs.username }}" || echo "No changes"
           git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git HEAD:main
@@ -121,7 +124,7 @@ jobs:
           echo "eula=true" > eula.txt
           cp ../orchestrator/server.js .
           npm install ws
-          node server.js ${{ github.event.inputs.username }}
+          node server.js ${{ github.event.inputs.username }} ${{ github.event.inputs.ram }}
 
       - name: Save Data & Clean Endpoints
         if: always()
@@ -130,8 +133,8 @@ jobs:
           rm -rf server-env/node_modules server-env/package.json server-env/package-lock.json
           
           cd storage
-          git config user.name "AstroCore Engine"
-          git config user.email "engine@astrocore.com"
+          git config user.name "Absora Engine"
+          git config user.email "engine@absora.com"
           
           git pull https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git main --rebase || true
           
