@@ -6,6 +6,15 @@ const username = process.argv[2] || 'Pilot';
 const assignedRam = process.argv[3] || '4G';
 const wss = new WebSocket.Server({ port: 8080 });
 
+// --- ABSORA HYBRID HARDWARE LOGIC ---
+let planTotalGB = parseInt(assignedRam) || 4; 
+let planCores = 1;
+
+if (planTotalGB >= 6) planCores = 2;
+if (planTotalGB >= 8) planCores = 4;
+if (planTotalGB >= 16) planCores = 8;
+// ------------------------------------
+
 let activeClients = [];
 const MAX_LOG_HISTORY = 50; 
 let logHistory = [];
@@ -14,23 +23,37 @@ let intentionalStop = false;
 
 setInterval(() => {
     if (activeClients.length > 0) {
-        const totalMem = os.totalmem();
-        const freeMem = os.freemem();
-        const usedMem = totalMem - freeMem;
-        const ramPercent = ((usedMem / totalMem) * 100).toFixed(1);
-        const ramString = `${(usedMem / 1024 / 1024 / 1024).toFixed(2)}GB / ${(totalMem / 1024 / 1024 / 1024).toFixed(2)}GB`;
+        const realTotal = os.totalmem();
+        const realFree = os.freemem();
+        const realUsed = realTotal - realFree;
+        const realUsedGB = realUsed / (1024 * 1024 * 1024);
+        
+        const realCpuLoad = os.loadavg()[0] / os.cpus().length;
 
-        const cpus = os.cpus().length;
-        const cpuLoad = ((os.loadavg()[0] / cpus) * 100).toFixed(1);
-        const cpuPercent = Math.min(cpuLoad, 100); 
-        const cpuString = `${cpuPercent}%`;
+        let displayUsedGB = 0;
+
+        // HYBRID CHECK: Real RAM for <=8GB plans, Faked RAM for >8GB plans
+        if (planTotalGB <= 8) {
+            // Use the REAL RAM usage, but cap it at 98% of their plan so it never overflows
+            displayUsedGB = Math.min(realUsedGB, planTotalGB * 0.98);
+        } else {
+            // Fake proportional usage for massive plans
+            const memoryPercent = realUsed / realTotal;
+            displayUsedGB = planTotalGB * memoryPercent;
+        }
+
+        const ramPercent = ((displayUsedGB / planTotalGB) * 100).toFixed(1);
+        const ramString = `${displayUsedGB.toFixed(2)}GB / ${planTotalGB.toFixed(2)}GB`;
+
+        const cpuPercentNum = Math.min((realCpuLoad * 100), 100).toFixed(1);
+        const cpuString = `${cpuPercentNum}% (${planCores} vCPU)`;
 
         const statsPayload = JSON.stringify({
             type: 'stats',
             ram: ramString,
             ramPercent: ramPercent,
             cpu: cpuString,
-            cpuPercent: cpuPercent
+            cpuPercent: cpuPercentNum
         });
 
         activeClients.forEach(ws => {
