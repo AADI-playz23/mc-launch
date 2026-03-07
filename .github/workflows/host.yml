@@ -60,7 +60,8 @@ jobs:
           cloudflared tunnel --url http://localhost:8080 > cloudflared.log 2>&1 &
           
           echo "Waiting for tunnels to stabilize..."
-          sleep 8
+          sleep 15
+          
           
           # Extract endpoints
           BORE_IP=$(grep -oE 'bore.pub:[0-9]+' bore.log | head -1)
