@@ -3,6 +3,7 @@ const WebSocket = require('ws');
 const os = require('os'); 
 
 const username = process.argv[2] || 'Pilot';
+const assignedRam = process.argv[3] || '4G';
 const wss = new WebSocket.Server({ port: 8080 });
 
 let activeClients = [];
@@ -42,7 +43,7 @@ setInterval(() => {
 
 wss.on('connection', (ws) => {
     activeClients.push(ws);
-    console.log("[AstroCore] Web Dashboard connected to telemetry stream.");
+    console.log("[Absora] Web Dashboard connected to telemetry stream.");
 
     if (logHistory.length > 0) {
         ws.send(JSON.stringify({ text: logHistory.join('') }));
@@ -86,9 +87,9 @@ const broadcast = (text) => {
 };
 
 function startMinecraft() {
-    broadcast("[AstroCore] Booting Minecraft Engine...\n");
+    broadcast(`[Absora] Booting Engine with ${assignedRam} RAM allocation...\n`);
     mcServer = spawn('java', [
-        '-Xms6G', '-Xmx6G',
+        `-Xms${assignedRam}`, `-Xmx${assignedRam}`,
         '-XX:+AlwaysPreTouch', '-XX:+DisableExplicitGC', '-XX:+ParallelRefProcEnabled',
         '-XX:+PerfDisableSharedMem', '-XX:+UnlockExperimentalVMOptions', '-XX:+UseG1GC',
         '-XX:G1HeapRegionSize=8M', '-XX:G1HeapWastePercent=5', '-XX:G1MaxNewSizePercent=40',
@@ -111,10 +112,10 @@ function startMinecraft() {
 
     mcServer.on('close', (code) => {
         if (intentionalStop) {
-            broadcast("\n[AstroCore] Engine shut down. Terminating orbital container...");
+            broadcast("\n[Absora] Engine shut down. Terminating orbital container...");
             process.exit(0); 
         } else {
-            broadcast(`\n[AstroCore] Server stopped. Rebooting in 5 seconds...`);
+            broadcast(`\n[Absora] Server stopped. Rebooting in 5 seconds...`);
             setTimeout(startMinecraft, 5000); 
         }
     });
