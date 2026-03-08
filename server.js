@@ -6,14 +6,11 @@ const username = process.argv[2] || 'Pilot';
 const assignedRam = process.argv[3] || '4G';
 const wss = new WebSocket.Server({ port: 8080 });
 
-// --- ABSORA HYBRID HARDWARE LOGIC ---
 let planTotalGB = parseInt(assignedRam) || 4; 
 let planCores = 1;
-
 if (planTotalGB >= 6) planCores = 2;
 if (planTotalGB >= 8) planCores = 4;
 if (planTotalGB >= 16) planCores = 8;
-// ------------------------------------
 
 let activeClients = [];
 const MAX_LOG_HISTORY = 50; 
@@ -27,11 +24,9 @@ setInterval(() => {
         const realFree = os.freemem();
         const realUsed = realTotal - realFree;
         const realUsedGB = realUsed / (1024 * 1024 * 1024);
-        
         const realCpuLoad = os.loadavg()[0] / os.cpus().length;
 
         let displayUsedGB = 0;
-
         if (planTotalGB <= 8) {
             displayUsedGB = Math.min(realUsedGB, planTotalGB * 0.98);
         } else {
@@ -41,69 +36,37 @@ setInterval(() => {
 
         const ramPercent = ((displayUsedGB / planTotalGB) * 100).toFixed(1);
         const ramString = `${displayUsedGB.toFixed(2)}GB / ${planTotalGB.toFixed(2)}GB`;
-
         const cpuPercentNum = Math.min((realCpuLoad * 100), 100).toFixed(1);
         const cpuString = `${cpuPercentNum}% (${planCores} vCPU)`;
 
-        const statsPayload = JSON.stringify({
-            type: 'stats',
-            ram: ramString,
-            ramPercent: ramPercent,
-            cpu: cpuString,
-            cpuPercent: cpuPercentNum
-        });
-
-        activeClients.forEach(ws => {
-            if (ws.readyState === WebSocket.OPEN) {
-                ws.send(statsPayload);
-            }
-        });
+        const statsPayload = JSON.stringify({ type: 'stats', ram: ramString, ramPercent: ramPercent, cpu: cpuString, cpuPercent: cpuPercentNum });
+        activeClients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) { ws.send(statsPayload); } });
     }
 }, 3000);
 
 wss.on('connection', (ws) => {
     activeClients.push(ws);
     console.log("[Absora] Web Dashboard connected to telemetry stream.");
-
-    if (logHistory.length > 0) {
-        ws.send(JSON.stringify({ text: logHistory.join('') }));
-    }
-
+    if (logHistory.length > 0) { ws.send(JSON.stringify({ text: logHistory.join('') })); }
     ws.on('error', () => {});
-
     ws.on('message', (message) => {
         try {
             const data = JSON.parse(message);
             if (data.type === 'command' && mcServer) {
                 const cmd = data.command.trim().toLowerCase();
-                
-                if (cmd === 'stop') {
-                    intentionalStop = true; 
-                } else if (cmd === 'restart') {
-                    intentionalStop = false; 
-                    mcServer.stdin.write("stop\n"); 
-                    return;
-                }
-                
+                if (cmd === 'stop') { intentionalStop = true; } 
+                else if (cmd === 'restart') { intentionalStop = false; mcServer.stdin.write("stop\n"); return; }
                 mcServer.stdin.write(data.command + "\n");
             }
         } catch(e) {}
     });
-
-    ws.on('close', () => {
-        activeClients = activeClients.filter(client => client !== ws);
-    });
+    ws.on('close', () => { activeClients = activeClients.filter(client => client !== ws); });
 });
 
 const broadcast = (text) => {
     logHistory.push(text);
     if (logHistory.length > MAX_LOG_HISTORY) logHistory.shift(); 
-
-    activeClients.forEach(ws => {
-        if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ text: text }));
-        }
-    });
+    activeClients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) { ws.send(JSON.stringify({ text: text })); } });
 };
 
 function startMinecraft() {
@@ -120,15 +83,8 @@ function startMinecraft() {
         '-jar', 'server.jar', 'nogui'
     ]);
 
-    mcServer.stdout.on('data', (data) => {
-        process.stdout.write(data);
-        broadcast(data.toString());
-    });
-
-    mcServer.stderr.on('data', (data) => {
-        process.stderr.write(data);
-        broadcast(data.toString());
-    });
+    mcServer.stdout.on('data', (data) => { process.stdout.write(data); broadcast(data.toString()); });
+    mcServer.stderr.on('data', (data) => { process.stderr.write(data); broadcast(data.toString()); });
 
     mcServer.on('close', (code) => {
         if (intentionalStop) {
