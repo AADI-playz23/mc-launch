@@ -17,6 +17,10 @@ on:
         description: 'RAM Allocation'
         required: true
         default: '4G'
+      wipe_data:
+        description: 'Wipe old data before starting'
+        required: false
+        default: 'false'
 
 jobs:
   run-server:
@@ -41,7 +45,20 @@ jobs:
           git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git engine
           git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git storage
           mkdir -p server-env
-          cp -r storage/${{ github.event.inputs.username }}/* server-env/ || echo "New user."
+          
+          if [ "${{ github.event.inputs.wipe_data }}" == "true" ]; then
+             echo "Deleting old server data for ${{ github.event.inputs.username }}..."
+             cd storage
+             rm -rf ${{ github.event.inputs.username }} || true
+             git config user.name "Absora Engine"
+             git config user.email "engine@absora.com"
+             git add .
+             git commit -m "System: Wipe deleted server for ${{ github.event.inputs.username }}" || true
+             git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main
+             cd ..
+          else
+             cp -r storage/${{ github.event.inputs.username }}/* server-env/ || echo "New user."
+          fi
 
       - name: Fetch Latest Engine
         run: |
@@ -117,14 +134,13 @@ jobs:
           git commit -m "Endpoints generated for ${{ github.event.inputs.username }}" || echo "No changes"
           git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git HEAD:main
 
-      - name: Ignite Server Core (With Strict Hardware Limits)
+      - name: Ignite Server Core (Strict Hardware Limits)
         run: |
           cd server-env
           echo "eula=true" > eula.txt
           cp ../orchestrator/server.js .
           npm install ws
           
-          # --- ABSORA STRICT HARDWARE LIMITER ---
           RAM="${{ github.event.inputs.ram }}"
           TOTAL_CORES=$(nproc)
           
