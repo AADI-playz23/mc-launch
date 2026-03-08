@@ -66,7 +66,6 @@ jobs:
           echo "Waiting for tunnels to stabilize..."
           sleep 15
           
-          # Extract endpoints
           BORE_IP=$(grep -oE 'bore.pub:[0-9]+' bore.log | head -1)
           BORE_PORT=$(echo $BORE_IP | cut -d':' -f2)
           CF_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' cloudflared.log | head -1 | sed 's/https/wss/')
@@ -118,13 +117,32 @@ jobs:
           git commit -m "Endpoints generated for ${{ github.event.inputs.username }}" || echo "No changes"
           git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git HEAD:main
 
-      - name: Ignite Server Core
+      - name: Ignite Server Core (With Strict Hardware Limits)
         run: |
           cd server-env
           echo "eula=true" > eula.txt
           cp ../orchestrator/server.js .
           npm install ws
-          node server.js ${{ github.event.inputs.username }} ${{ github.event.inputs.ram }}
+          
+          # --- ABSORA STRICT HARDWARE LIMITER ---
+          RAM="${{ github.event.inputs.ram }}"
+          TOTAL_CORES=$(nproc)
+          
+          if [ "$RAM" == "4G" ]; then 
+            ALLOWED_CORES="0"
+          elif [ "$RAM" == "6G" ]; then 
+            ALLOWED_CORES="0,1"
+          else
+            ALLOWED_CORES="0-$((TOTAL_CORES-1))"
+          fi
+          
+          echo "========================================="
+          echo "[Absora Resource Allocator]"
+          echo "Plan RAM: $RAM"
+          echo "Allocated CPU Threads: $ALLOWED_CORES"
+          echo "========================================="
+          
+          taskset -c $ALLOWED_CORES node server.js ${{ github.event.inputs.username }} $RAM
 
       - name: Save Data & Clean Endpoints
         if: always()
