@@ -32,12 +32,9 @@ setInterval(() => {
 
         let displayUsedGB = 0;
 
-        // HYBRID CHECK: Real RAM for <=8GB plans, Faked RAM for >8GB plans
         if (planTotalGB <= 8) {
-            // Use the REAL RAM usage, but cap it at 98% of their plan so it never overflows
             displayUsedGB = Math.min(realUsedGB, planTotalGB * 0.98);
         } else {
-            // Fake proportional usage for massive plans
             const memoryPercent = realUsed / realTotal;
             displayUsedGB = planTotalGB * memoryPercent;
         }
