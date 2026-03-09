@@ -19,19 +19,24 @@ on:
       uptime_quota:
         required: false
         default: '6'
+      java_version:
+        required: true
+        default: '21'
 
 jobs:
   run-server:
     runs-on: ubuntu-latest
     steps:
-      - name: Setup Node & Java 21
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - uses: actions/setup-java@v4
+          
+      - name: Setup Dynamic Java
+        uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: ${{ github.event.inputs.java_version }}
 
       - name: Checkout Orchestrator
         uses: actions/checkout@v4
@@ -55,8 +60,6 @@ jobs:
           cd server-env
           VERSION="${{ github.event.inputs.version }}"
           DOWNLOAD_URL=""
-          
-          # Search all JSON files for the requested version
           for file in ../orchestrator/*.json; do
              URL=$(jq -r ".\"$VERSION\" // .versions[\"$VERSION\"] // empty" "$file" 2>/dev/null)
              if [ -n "$URL" ]; then
@@ -65,23 +68,13 @@ jobs:
              fi
           done
           
-          if [ -z "$DOWNLOAD_URL" ]; then
-             echo "Error: Could not find version $VERSION in database."
-             exit 1
-          fi
+          if [ -z "$DOWNLOAD_URL" ]; then exit 1; fi
           
-          echo "Downloading from: $DOWNLOAD_URL"
           wget -O downloaded.jar "$DOWNLOAD_URL"
           
-          # --- FLAWLESS INSTALLER DETECTION ---
           if [[ "$DOWNLOAD_URL" == *"-installer.jar"* || "$DOWNLOAD_URL" == *"neoforge"* ]]; then
-              echo "Installer detected! Running forge/neoforge installation sequence..."
               java -jar downloaded.jar --installServer
-              
-              # Clean up the installer
               rm downloaded.jar
-              
-              # Legacy Forge (1.12.2 - 1.16.5) creates a forge-VERSION.jar or forge-VERSION-universal.jar
               if ls forge-*-universal.jar 1> /dev/null 2>&1; then
                   mv forge-*-universal.jar server.jar
               elif ls forge-*.jar 1> /dev/null 2>&1; then
@@ -92,7 +85,7 @@ jobs:
               mv downloaded.jar server.jar
           fi
 
-      - name: Start Tunnels & Push IP directly to GitHub Storage
+      - name: Start Tunnels & Push IP
         run: |
           wget https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz && tar -xzf bore-*.tar.gz && sudo mv bore /usr/local/bin/
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb && sudo dpkg -i cloudflared-linux-amd64.deb
@@ -109,13 +102,8 @@ jobs:
           EOF
           )
           RECORD_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/dns_records?type=SRV&name=_minecraft._tcp.$FULL_DOMAIN" -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" -H "Content-Type: application/json" | jq -r '.result[0].id')
-          if [ "$RECORD_ID" != "null" ] && [ -n "$RECORD_ID" ]; then
-             curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/dns_records/$RECORD_ID" -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" -H "Content-Type: application/json" -d "$JSON_DATA"
-          else
-             curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/dns_records" -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" -H "Content-Type: application/json" -d "$JSON_DATA"
-          fi
+          if [ "$RECORD_ID" != "null" ] && [ -n "$RECORD_ID" ]; then curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/dns_records/$RECORD_ID" -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" -H "Content-Type: application/json" -d "$JSON_DATA"; else curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/dns_records" -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" -H "Content-Type: application/json" -d "$JSON_DATA"; fi
           
-          # UNBLOCKABLE GITHUB IP PUSH (Bypasses InfinityFree completely)
           cd engine
           mkdir -p ip
           FILE="ip/${{ github.event.inputs.username }}.json"
@@ -141,13 +129,9 @@ jobs:
         if: always()
         run: |
           cd server-env
-          
-          # THE FIX: ONLY RELAY IF THE 5.5 HOUR TIMER SPECIFICALLY CREATED THE FLAG
           if [ -f relay.flag ]; then RELAY="true"; else RELAY="false"; fi
-          
           rm -f server.jar server.js relay.flag downloaded.jar && rm -rf node_modules package.json package-lock.json
           
-          # SAVE MAP DATA
           cd ../storage
           git config user.name "Absora Engine" && git config user.email "engine@absora.com"
           git pull https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git main --rebase || true
@@ -156,7 +140,6 @@ jobs:
           git add . && git commit -m "Save session" || true
           git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main
           
-          # DELETE IP FROM GITHUB
           cd ../engine
           FILE="ip/${{ github.event.inputs.username }}.json"
           if [ -f "$FILE" ]; then
@@ -166,16 +149,8 @@ jobs:
              git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git HEAD:main
           fi
           
-          # NATIVE GITHUB RELAY TRIGGER
           QUOTA=${{ github.event.inputs.uptime_quota }}
           NEW_QUOTA=$((QUOTA - 6))
-          
           if [ "$RELAY" == "true" ] && [ "$NEW_QUOTA" -gt 0 ]; then
-             echo "Relaying to next node. Hours remaining: $NEW_QUOTA"
-             curl -X POST "https://api.github.com/repos/AADI-playz23/mc-launch/actions/workflows/host.yml/dispatches" \
-             -H "Accept: application/vnd.github.v3+json" \
-             -H "Authorization: token ${{ secrets.ABSORA_PAT }}" \
-             -d "{\"ref\":\"main\",\"inputs\":{\"username\":\"${{ github.event.inputs.username }}\",\"instance_id\":\"${{ github.event.inputs.instance_id }}\",\"version\":\"${{ github.event.inputs.version }}\",\"servername\":\"${{ github.event.inputs.servername }}\",\"ram\":\"${{ github.event.inputs.ram }}\",\"wipe_data\":\"false\",\"uptime_quota\":\"$NEW_QUOTA\"}}"
-          else
-             echo "Server stopped manually or crashed. Halting relay chain."
+             curl -X POST "https://api.github.com/repos/AADI-playz23/mc-launch/actions/workflows/host.yml/dispatches" -H "Accept: application/vnd.github.v3+json" -H "Authorization: token ${{ secrets.ABSORA_PAT }}" -d "{\"ref\":\"main\",\"inputs\":{\"username\":\"${{ github.event.inputs.username }}\",\"instance_id\":\"${{ github.event.inputs.instance_id }}\",\"version\":\"${{ github.event.inputs.version }}\",\"servername\":\"${{ github.event.inputs.servername }}\",\"ram\":\"${{ github.event.inputs.ram }}\",\"wipe_data\":\"false\",\"uptime_quota\":\"$NEW_QUOTA\",\"java_version\":\"${{ github.event.inputs.java_version }}\"}}"
           fi
