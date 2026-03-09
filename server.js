@@ -24,7 +24,7 @@ const broadcast = (text) => {
     activeClients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) { ws.send(JSON.stringify({ text: text })); } });
 };
 
-// --- ABSORA RELAY KILLSWITCH ---
+// --- ABSORA RELAY KILLSWITCH (OPT-IN) ---
 const MAX_RUNTIME_MINUTES = 345; // 5 hours and 45 minutes
 let elapsedMinutes = 0;
 
@@ -36,6 +36,10 @@ setInterval(() => {
     }
     if (elapsedMinutes >= MAX_RUNTIME_MINUTES) {
         broadcast("\n[Absora Cloud] Initiating automated Relay Transfer. Saving data...");
+        
+        // ONLY FLAG FOR RELAY IF IT SURVIVES THE FULL 5.5 HOURS
+        fs.writeFileSync('relay.flag', 'true'); 
+        
         if (mcServer) {
             mcServer.stdin.write('kick @a [Absora] Cloud node transfer in progress. Please reconnect in 60 seconds!\n');
             mcServer.stdin.write('save-all\n');
@@ -43,31 +47,22 @@ setInterval(() => {
         }
     }
 }, 60000); // Check every 1 minute
-// -------------------------------
+// ----------------------------------------
 
 setInterval(() => {
     if (activeClients.length > 0) {
         const realTotal = os.totalmem();
         const realFree = os.freemem();
-        const realUsed = realTotal - realFree;
-        const realUsedGB = realUsed / (1024 * 1024 * 1024);
+        const realUsedGB = (realTotal - realFree) / (1024 * 1024 * 1024);
         const realCpuLoad = os.loadavg()[0] / os.cpus().length;
 
-        let displayUsedGB = 0;
-        if (planTotalGB <= 8) {
-            displayUsedGB = Math.min(realUsedGB, planTotalGB * 0.98);
-        } else {
-            const memoryPercent = realUsed / realTotal;
-            displayUsedGB = planTotalGB * memoryPercent;
-        }
-
+        const displayUsedGB = planTotalGB <= 8 ? Math.min(realUsedGB, planTotalGB * 0.98) : planTotalGB * ((realTotal - realFree) / realTotal);
         const ramPercent = ((displayUsedGB / planTotalGB) * 100).toFixed(1);
         const ramString = `${displayUsedGB.toFixed(2)}GB / ${planTotalGB.toFixed(2)}GB`;
         const cpuPercentNum = Math.min((realCpuLoad * 100), 100).toFixed(1);
         const cpuString = `${cpuPercentNum}% (${planCores} vCPU)`;
 
-        const statsPayload = JSON.stringify({ type: 'stats', ram: ramString, ramPercent: ramPercent, cpu: cpuString, cpuPercent: cpuPercentNum });
-        activeClients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) { ws.send(statsPayload); } });
+        activeClients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) { ws.send(JSON.stringify({ type: 'stats', ram: ramString, ramPercent: ramPercent, cpu: cpuString, cpuPercent: cpuPercentNum })); } });
     }
 }, 3000);
 
@@ -83,20 +78,8 @@ wss.on('connection', (ws) => {
             const data = JSON.parse(message);
             if (data.type === 'command' && mcServer) {
                 const cmd = data.command.trim().toLowerCase();
-                
-                // --- RELAY CONTROLS ---
-                if (cmd === 'stop') { 
-                    // Write flag so the YAML script knows NOT to relay
-                    fs.writeFileSync('stop.flag', 'true'); 
-                } 
-                else if (cmd === 'restart') { 
-                    // Remove flag if it exists, so YAML script WILL relay (acting as a clean restart)
-                    if (fs.existsSync('stop.flag')) fs.unlinkSync('stop.flag');
-                    mcServer.stdin.write("stop\n"); 
-                    return; 
-                }
-                // ----------------------
-                
+                // If user clicks restart, just stop it normally without creating relay.flag
+                if (cmd === 'restart') { mcServer.stdin.write("stop\n"); return; }
                 mcServer.stdin.write(data.command + "\n");
             }
         } catch(e) {}
@@ -106,24 +89,33 @@ wss.on('connection', (ws) => {
 });
 
 function startMinecraft() {
-    broadcast(`[Absora] Booting Engine with ${assignedRam} RAM allocation...\n`);
-    mcServer = spawn('java', [
-        `-Xms${assignedRam}`, `-Xmx${assignedRam}`,
-        '-XX:+AlwaysPreTouch', '-XX:+DisableExplicitGC', '-XX:+ParallelRefProcEnabled',
-        '-XX:+PerfDisableSharedMem', '-XX:+UnlockExperimentalVMOptions', '-XX:+UseG1GC',
-        '-XX:G1HeapRegionSize=8M', '-XX:G1HeapWastePercent=5', '-XX:G1MaxNewSizePercent=40',
-        '-XX:G1MixedGCCountTarget=4', '-XX:G1MixedGCLiveThresholdPercent=90',
-        '-XX:G1NewSizePercent=30', '-XX:G1RSetUpdatingPauseTimePercent=5',
-        '-XX:G1ReservePercent=20', '-XX:InitiatingHeapOccupancyPercent=15',
-        '-XX:MaxGCPauseMillis=200', '-XX:MaxTenuringThreshold=1', '-XX:SurvivorRatio=32',
-        '-jar', 'server.jar', 'nogui'
-    ]);
+    let launchCmd = 'java';
+    let launchArgs = [];
+
+    // --- DYNAMIC ENGINE DETECTION ---
+    if (fs.existsSync('run.sh')) {
+        // Modern Forge / NeoForge Launch Sequence
+        fs.writeFileSync('user_jvm_args.txt', `-Xms${assignedRam} -Xmx${assignedRam}`);
+        launchCmd = 'sh';
+        launchArgs = ['run.sh', 'nogui'];
+        broadcast(`[Absora Cloud] Modern Modded Engine detected. Executing launch script...\n`);
+    } else {
+        // Standard Launch Sequence (Paper, Purpur, Fabric, Mohist, Legacy Forge)
+        launchArgs = [
+            `-Xms${assignedRam}`, `-Xmx${assignedRam}`,
+            '-XX:+UseG1GC', '-XX:+ParallelRefProcEnabled', '-XX:MaxGCPauseMillis=200',
+            '-jar', 'server.jar', 'nogui'
+        ];
+        broadcast(`[Absora Cloud] Standard Engine detected. Booting with ${assignedRam} allocation...\n`);
+    }
+
+    mcServer = spawn(launchCmd, launchArgs);
 
     mcServer.stdout.on('data', (data) => { process.stdout.write(data); broadcast(data.toString()); });
     mcServer.stderr.on('data', (data) => { process.stderr.write(data); broadcast(data.toString()); });
 
     mcServer.on('close', (code) => {
-        broadcast("\n[Absora] Engine container shutting down. Syncing volumes...");
+        broadcast("\n[Absora Cloud] Engine container shutting down. Syncing volumes...");
         process.exit(0); 
     });
 }
