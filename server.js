@@ -17,6 +17,7 @@ let activeClients = [];
 const MAX_LOG_HISTORY = 50; 
 let logHistory = [];
 let mcServer;
+let isRestarting = false; // NEW: The flag that prevents the runner from dying
 
 const broadcast = (text) => {
     logHistory.push(text);
@@ -50,10 +51,12 @@ setInterval(() => {
         const realFree = os.freemem();
         const displayUsedGB = planTotalGB <= 8 ? Math.min((realTotal - realFree) / (1024 ** 3), planTotalGB * 0.98) : planTotalGB * ((realTotal - realFree) / realTotal);
         const ramPercent = ((displayUsedGB / planTotalGB) * 100).toFixed(1);
-        const ramString = `${displayUsedGB.toFixed(2)}GB / ${planTotalGB.toFixed(2)}GB`;
         const cpuPercentNum = Math.min(((os.loadavg()[0] / os.cpus().length) * 100), 100).toFixed(1);
-        const cpuString = `${cpuPercentNum}% (${planCores} vCPU)`;
-        activeClients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) { ws.send(JSON.stringify({ type: 'stats', ram: ramString, ramPercent: ramPercent, cpu: cpuString, cpuPercent: cpuPercentNum })); } });
+        activeClients.forEach(ws => { 
+            if (ws.readyState === WebSocket.OPEN) { 
+                ws.send(JSON.stringify({ type: 'stats', ram: `${displayUsedGB.toFixed(2)}GB / ${planTotalGB.toFixed(2)}GB`, ramPercent: ramPercent, cpu: `${cpuPercentNum}% (${planCores} vCPU)`, cpuPercent: cpuPercentNum })); 
+            } 
+        });
     }
 }, 3000);
 
@@ -66,7 +69,22 @@ wss.on('connection', (ws) => {
             const data = JSON.parse(message);
             if (data.type === 'command' && mcServer) {
                 const cmd = data.command.trim().toLowerCase();
-                if (cmd === 'restart') { mcServer.stdin.write("stop\n"); return; }
+                
+                // NEW: Smart Restart Logic
+                if (cmd === 'restart') {
+                    isRestarting = true;
+                    broadcast("\n[Absora Cloud] Soft reboot initiated. Shutting down JVM...");
+                    mcServer.stdin.write("stop\n");
+                    return; 
+                }
+                
+                if (cmd === 'stop') {
+                    isRestarting = false; // Ensure it actually stops
+                    broadcast("\n[Absora Cloud] Manual shutdown initiated.");
+                    mcServer.stdin.write("stop\n");
+                    return;
+                }
+
                 mcServer.stdin.write(data.command + "\n");
             }
         } catch(e) {}
@@ -82,22 +100,33 @@ function startMinecraft() {
         fs.writeFileSync('user_jvm_args.txt', `-Xms${assignedRam} -Xmx${assignedRam}`);
         launchCmd = 'sh';
         launchArgs = ['run.sh', 'nogui'];
-        broadcast(`[Absora Cloud] Modern Modded Engine detected. Executing launch script...\n`);
+        broadcast(`\n[Absora Cloud] Modded Engine detected. Executing launch script...\n`);
     } else {
         launchArgs = [
             `-Xms${assignedRam}`, `-Xmx${assignedRam}`,
             '-XX:+UseG1GC', '-XX:+ParallelRefProcEnabled', '-XX:MaxGCPauseMillis=200',
             '-jar', 'server.jar', 'nogui'
         ];
-        broadcast(`[Absora Cloud] Standard Engine detected. Booting with ${assignedRam} allocation...\n`);
+        broadcast(`\n[Absora Cloud] Standard Engine detected. Booting JVM...\n`);
     }
 
     mcServer = spawn(launchCmd, launchArgs);
+    
     mcServer.stdout.on('data', (data) => { process.stdout.write(data); broadcast(data.toString()); });
     mcServer.stderr.on('data', (data) => { process.stderr.write(data); broadcast(data.toString()); });
+    
     mcServer.on('close', (code) => {
-        broadcast("\n[Absora Cloud] Engine container shutting down. Syncing volumes...");
-        process.exit(0); 
+        // NEW: Check if we are restarting or actually shutting down
+        if (isRestarting) {
+            broadcast("\n[Absora Cloud] JVM offline. Reigniting inside current runner in 3 seconds...");
+            isRestarting = false; // Reset the flag
+            setTimeout(startMinecraft, 3000); // Boot it back up!
+        } else {
+            broadcast("\n[Absora Cloud] Engine container shutting down. Syncing volumes...");
+            process.exit(0); // Kill the runner and save to cloud
+        }
     });
 }
+
+// Initial Boot
 startMinecraft();
