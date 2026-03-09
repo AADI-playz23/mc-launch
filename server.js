@@ -1,6 +1,7 @@
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
 const os = require('os'); 
+const fs = require('fs');
 
 const username = process.argv[2] || 'Pilot';
 const assignedRam = process.argv[3] || '4G';
@@ -16,7 +17,6 @@ let activeClients = [];
 const MAX_LOG_HISTORY = 50; 
 let logHistory = [];
 let mcServer;
-let intentionalStop = false;
 
 const broadcast = (text) => {
     logHistory.push(text);
@@ -25,8 +25,7 @@ const broadcast = (text) => {
 };
 
 // --- ABSORA RELAY KILLSWITCH ---
-// Safely shut down at 5 hours and 45 minutes to prevent data corruption
-const MAX_RUNTIME_MINUTES = 345; 
+const MAX_RUNTIME_MINUTES = 345; // 5 hours and 45 minutes
 let elapsedMinutes = 0;
 
 setInterval(() => {
@@ -37,7 +36,6 @@ setInterval(() => {
     }
     if (elapsedMinutes >= MAX_RUNTIME_MINUTES) {
         broadcast("\n[Absora Cloud] Initiating automated Relay Transfer. Saving data...");
-        intentionalStop = true;
         if (mcServer) {
             mcServer.stdin.write('kick @a [Absora] Cloud node transfer in progress. Please reconnect in 60 seconds!\n');
             mcServer.stdin.write('save-all\n');
@@ -77,18 +75,33 @@ wss.on('connection', (ws) => {
     activeClients.push(ws);
     console.log("[Absora] Web Dashboard connected to telemetry stream.");
     if (logHistory.length > 0) { ws.send(JSON.stringify({ text: logHistory.join('') })); }
+    
     ws.on('error', () => {});
+    
     ws.on('message', (message) => {
         try {
             const data = JSON.parse(message);
             if (data.type === 'command' && mcServer) {
                 const cmd = data.command.trim().toLowerCase();
-                if (cmd === 'stop') { intentionalStop = true; } 
-                else if (cmd === 'restart') { intentionalStop = false; mcServer.stdin.write("stop\n"); return; }
+                
+                // --- RELAY CONTROLS ---
+                if (cmd === 'stop') { 
+                    // Write flag so the YAML script knows NOT to relay
+                    fs.writeFileSync('stop.flag', 'true'); 
+                } 
+                else if (cmd === 'restart') { 
+                    // Remove flag if it exists, so YAML script WILL relay (acting as a clean restart)
+                    if (fs.existsSync('stop.flag')) fs.unlinkSync('stop.flag');
+                    mcServer.stdin.write("stop\n"); 
+                    return; 
+                }
+                // ----------------------
+                
                 mcServer.stdin.write(data.command + "\n");
             }
         } catch(e) {}
     });
+    
     ws.on('close', () => { activeClients = activeClients.filter(client => client !== ws); });
 });
 
@@ -110,13 +123,8 @@ function startMinecraft() {
     mcServer.stderr.on('data', (data) => { process.stderr.write(data); broadcast(data.toString()); });
 
     mcServer.on('close', (code) => {
-        if (intentionalStop) {
-            broadcast("\n[Absora] Engine shut down. Terminating orbital container...");
-            process.exit(0); 
-        } else {
-            broadcast(`\n[Absora] Server stopped. Rebooting in 5 seconds...`);
-            setTimeout(startMinecraft, 5000); 
-        }
+        broadcast("\n[Absora] Engine container shutting down. Syncing volumes...");
+        process.exit(0); 
     });
 }
 
