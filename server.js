@@ -14,10 +14,10 @@ if (planTotalGB >= 8) planCores = 4;
 if (planTotalGB >= 16) planCores = 8;
 
 let activeClients = [];
-const MAX_LOG_HISTORY = 50; 
+const MAX_LOG_HISTORY = 100; 
 let logHistory = [];
 let mcServer;
-let isRestarting = false; // NEW: The flag that prevents the runner from dying
+let isRestarting = false; // The magic flag
 
 const broadcast = (text) => {
     logHistory.push(text);
@@ -30,12 +30,8 @@ let elapsedMinutes = 0;
 
 setInterval(() => {
     elapsedMinutes++;
-    if (elapsedMinutes === 340) {
-        broadcast("\n[Absora Cloud] WARNING: Approaching node maximum lifespan. Cloud relay transfer initiating in 5 minutes.");
-        if (mcServer) mcServer.stdin.write('say [Absora] Server cloud node transferring in 5 minutes!\n');
-    }
     if (elapsedMinutes >= MAX_RUNTIME_MINUTES) {
-        broadcast("\n[Absora Cloud] Initiating automated Relay Transfer. Saving data...");
+        broadcast("\n[Absora Engine] Max lifespan reached. Initiating automated relay transfer...\n");
         fs.writeFileSync('relay.flag', 'true'); 
         if (mcServer) {
             mcServer.stdin.write('kick @a [Absora] Cloud node transfer in progress. Please reconnect in 60 seconds!\n');
@@ -64,23 +60,29 @@ wss.on('connection', (ws) => {
     activeClients.push(ws);
     if (logHistory.length > 0) { ws.send(JSON.stringify({ text: logHistory.join('') })); }
     ws.on('error', () => {});
+    
     ws.on('message', (message) => {
         try {
             const data = JSON.parse(message);
             if (data.type === 'command' && mcServer) {
                 const cmd = data.command.trim().toLowerCase();
                 
-                // NEW: Smart Restart Logic
+                // --- THE RESTART FIX ---
                 if (cmd === 'restart') {
                     isRestarting = true;
-                    broadcast("\n[Absora Cloud] Soft reboot initiated. Shutting down JVM...");
-                    mcServer.stdin.write("stop\n");
+                    broadcast("\n[Absora Engine] Soft Reboot requested. Saving world data...\n");
+                    mcServer.stdin.write("save-all\n");
+                    
+                    // Wait 2 seconds for chunks to save before stopping
+                    setTimeout(() => {
+                        mcServer.stdin.write("stop\n");
+                    }, 2000);
                     return; 
                 }
                 
                 if (cmd === 'stop') {
-                    isRestarting = false; // Ensure it actually stops
-                    broadcast("\n[Absora Cloud] Manual shutdown initiated.");
+                    isRestarting = false; // Ensure runner dies on normal stop
+                    broadcast("\n[Absora Engine] Manual shutdown initiated...\n");
                     mcServer.stdin.write("stop\n");
                     return;
                 }
@@ -100,30 +102,30 @@ function startMinecraft() {
         fs.writeFileSync('user_jvm_args.txt', `-Xms${assignedRam} -Xmx${assignedRam}`);
         launchCmd = 'sh';
         launchArgs = ['run.sh', 'nogui'];
-        broadcast(`\n[Absora Cloud] Modded Engine detected. Executing launch script...\n`);
     } else {
         launchArgs = [
             `-Xms${assignedRam}`, `-Xmx${assignedRam}`,
             '-XX:+UseG1GC', '-XX:+ParallelRefProcEnabled', '-XX:MaxGCPauseMillis=200',
             '-jar', 'server.jar', 'nogui'
         ];
-        broadcast(`\n[Absora Cloud] Standard Engine detected. Booting JVM...\n`);
     }
 
+    broadcast(`\n[Absora Engine] Booting JVM Framework...\n`);
     mcServer = spawn(launchCmd, launchArgs);
     
     mcServer.stdout.on('data', (data) => { process.stdout.write(data); broadcast(data.toString()); });
     mcServer.stderr.on('data', (data) => { process.stderr.write(data); broadcast(data.toString()); });
     
     mcServer.on('close', (code) => {
-        // NEW: Check if we are restarting or actually shutting down
         if (isRestarting) {
-            broadcast("\n[Absora Cloud] JVM offline. Reigniting inside current runner in 3 seconds...");
-            isRestarting = false; // Reset the flag
-            setTimeout(startMinecraft, 3000); // Boot it back up!
+            broadcast("\n[Absora Engine] JVM offline. Purging cache and waiting for port 25565 to free (8 seconds)...\n");
+            isRestarting = false; // Reset flag so it doesn't loop infinitely
+            
+            // Wait 8 full seconds so Linux releases the TIME_WAIT port
+            setTimeout(startMinecraft, 8000); 
         } else {
-            broadcast("\n[Absora Cloud] Engine container shutting down. Syncing volumes...");
-            process.exit(0); // Kill the runner and save to cloud
+            broadcast("\n[Absora Engine] Container shutting down. Syncing volumes to Cloud...\n");
+            process.exit(0); // Normal stop, kill runner
         }
     });
 }
