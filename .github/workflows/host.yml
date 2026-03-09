@@ -83,7 +83,7 @@ jobs:
           fi
           
           # NEW: FAST MYSQL IP UPDATE
-          curl -X POST "http://YOUR_DOMAIN.COM/update_ip.php" -d "secret=absora_super_secret_relay_key&username=${{ github.event.inputs.username }}&instance_id=${{ github.event.inputs.instance_id }}&ip=$FULL_DOMAIN&ws=$CF_URL"
+          curl -X POST "https://abmchost.rf.gd/update_ip.php" -d "secret=absora_super_secret_relay_key&username=${{ github.event.inputs.username }}&instance_id=${{ github.event.inputs.instance_id }}&ip=$FULL_DOMAIN&ws=$CF_URL"
 
       - name: Ignite Server
         run: |
