@@ -6,6 +6,8 @@ on:
         required: true
       instance_id:
         required: true
+      servername:
+        required: true
 
 jobs:
   backup-world:
@@ -21,20 +23,18 @@ jobs:
         run: |
           cd workspace
           DATE_STAMP=$(date +%Y-%m-%d_%H-%M)
-          zip -r ../Backup_${DATE_STAMP}.zip world world_nether world_the_end || echo "No world found"
+          # Naming format: survival_2026-03-09_14-30.zip
+          zip -r ../${{ github.event.inputs.servername }}_${DATE_STAMP}.zip world world_nether world_the_end || echo "No world found"
 
       - name: Save Archive to Storage Repo
         run: |
           cd storage
           mkdir -p backups/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}
-          mv ../Backup_*.zip backups/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/
+          mv ../*.zip backups/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/
           
           git config user.name "Absora Backup Compiler"
           git config user.email "engine@absora.com"
           git pull origin main --rebase
           git add backups/
-          git commit -m "Automated Cloud Archive for ${{ github.event.inputs.username }}" || true
+          git commit -m "Automated Snapshot for ${{ github.event.inputs.username }}" || true
           git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main
-          
-          # Ping InfinityFree Database to say Backup Complete!
-          curl -X POST "http://abmchost.rf.gd/get_backup.php" -d "secret=absora_super_secret_relay_key&username=${{ github.event.inputs.username }}&instance_id=${{ github.event.inputs.instance_id }}&url=Internal%20Storage"
