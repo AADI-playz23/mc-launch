@@ -78,7 +78,7 @@ jobs:
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
 
-      - name: Establish Tunnels & Publish IPs
+      - name: Establish Tunnels & Publish Central IP JSON
         run: |
           bore local 25565 --to bore.pub > bore.log 2>&1 &
           cloudflared tunnel --url http://localhost:8080 > cloudflared.log 2>&1 &
@@ -100,14 +100,24 @@ jobs:
              curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/dns_records" -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" -H "Content-Type: application/json" -d "$JSON_DATA"
           fi
           
+          # --- ABSORA MASTER IP REGISTRY ---
           cd engine
           mkdir -p ip
-          # SAVE IP WITH INSTANCE ID TO PREVENT OVERWRITING
-          echo "{\"ip\": \"$FULL_DOMAIN\", \"ws\": \"$CF_URL\"}" > ip/${{ github.event.inputs.username }}_${{ github.event.inputs.instance_id }}.json
+          FILE="ip/${{ github.event.inputs.username }}.json"
+          
+          # If the file doesn't exist yet, create an empty JSON object
+          if [ ! -f "$FILE" ]; then
+            echo "{}" > "$FILE"
+          fi
+          
+          # Use JQ to inject this specific instance's data into the master file
+          jq ".[\"${{ github.event.inputs.instance_id }}\"] = {\"ip\": \"$FULL_DOMAIN\", \"ws\": \"$CF_URL\"}" "$FILE" > tmp.json && mv tmp.json "$FILE"
+          
           git config user.name "Absora Engine"
           git config user.email "engine@absora.com"
           git add ip/
           git commit -m "Endpoints for ${{ github.event.inputs.username }} Inst ${{ github.event.inputs.instance_id }}" || echo "No changes"
+          git pull --rebase origin main || true
           git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git HEAD:main
 
       - name: Ignite Server Core
@@ -121,7 +131,7 @@ jobs:
           if [ "$RAM" == "4G" ]; then ALLOWED_CORES="0"; elif [ "$RAM" == "6G" ]; then ALLOWED_CORES="0,1"; else ALLOWED_CORES="0-$((TOTAL_CORES-1))"; fi
           taskset -c $ALLOWED_CORES node server.js ${{ github.event.inputs.username }} $RAM
 
-      - name: Save Data
+      - name: Save Data & Scrub Registry
         if: always()
         run: |
           rm -f server-env/server.jar server-env/server.js
@@ -139,8 +149,13 @@ jobs:
           git commit -m "Save session ${{ github.event.inputs.instance_id }} for ${{ github.event.inputs.username }}" || echo "No changes"
           git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main
 
+          # --- REMOVE INSTANCE IP FROM MASTER REGISTRY ---
           cd ../engine
-          rm -f ip/${{ github.event.inputs.username }}_${{ github.event.inputs.instance_id }}.json
-          git add .
-          git commit -m "Server offline: scrub IP" || echo "Already removed"
-          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git HEAD:main
+          FILE="ip/${{ github.event.inputs.username }}.json"
+          if [ -f "$FILE" ]; then
+             jq "del(.[\"${{ github.event.inputs.instance_id }}\"])" "$FILE" > tmp.json && mv tmp.json "$FILE"
+             git add ip/
+             git commit -m "Server offline: scrub IP for Inst ${{ github.event.inputs.instance_id }}" || echo "Already removed"
+             git pull --rebase origin main || true
+             git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git HEAD:main
+          fi
