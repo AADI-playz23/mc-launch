@@ -3,26 +3,20 @@ on:
   workflow_dispatch:
     inputs:
       username:
-        description: 'The user starting the server'
         required: true
       instance_id:
-        description: 'Instance Slot (1-4)'
         required: true
         default: '1'
       version:
-        description: 'Minecraft version to load'
         required: true
         default: '1.21.11'
       servername:
-        description: 'Custom subdomain for the server'
         required: true
         default: 'play'
       ram:
-        description: 'RAM Allocation'
         required: true
         default: '4G'
       wipe_data:
-        description: 'Wipe old data before starting'
         required: false
         default: 'false'
 
@@ -44,42 +38,31 @@ jobs:
         with:
           path: orchestrator
 
-      - name: Download Storage & Engine
+      - name: Download Storage
         run: |
-          git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git engine
           git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git storage
           mkdir -p server-env
-          
           if [ "${{ github.event.inputs.wipe_data }}" == "true" ]; then
-             echo "Wiping data for instance ${{ github.event.inputs.instance_id }}..."
+             rm -rf storage/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }} || true
              cd storage
-             rm -rf ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }} || true
-             git config user.name "Absora Engine"
-             git config user.email "engine@absora.com"
-             git add .
-             git commit -m "System: Wipe instance ${{ github.event.inputs.instance_id }} for ${{ github.event.inputs.username }}" || true
+             git config user.name "Absora Engine" && git config user.email "engine@absora.com"
+             git add . && git commit -m "Wipe data" || true
              git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main
              cd ..
           else
-             cp -r storage/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/* server-env/ || echo "New instance slot."
+             cp -r storage/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/* server-env/ || echo "New instance."
           fi
 
-      - name: Fetch Latest Engine
+      - name: Fetch Engine
         run: |
           VERSION=${{ github.event.inputs.version }}
           DOWNLOAD_URL=$(jq -r ".versions[\"$VERSION\"]" orchestrator/versions.json)
           wget -O server-env/server.jar "$DOWNLOAD_URL"
 
-      - name: Install Tunnels
+      - name: Start Tunnels & Push IP to MySQL
         run: |
-          wget https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz
-          tar -xzf bore-*.tar.gz
-          sudo mv bore /usr/local/bin/
-          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          sudo dpkg -i cloudflared-linux-amd64.deb
-
-      - name: Establish Tunnels & Publish Central IP JSON
-        run: |
+          wget https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz && tar -xzf bore-*.tar.gz && sudo mv bore /usr/local/bin/
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb && sudo dpkg -i cloudflared-linux-amd64.deb
           bore local 25565 --to bore.pub > bore.log 2>&1 &
           cloudflared tunnel --url http://localhost:8080 > cloudflared.log 2>&1 &
           sleep 15
@@ -92,7 +75,6 @@ jobs:
           { "type": "SRV", "name": "_minecraft._tcp.$FULL_DOMAIN", "data": { "service": "_minecraft", "proto": "_tcp", "name": "$FULL_DOMAIN", "priority": 0, "weight": 0, "port": $BORE_PORT, "target": "bore.pub" } }
           EOF
           )
-          
           RECORD_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/dns_records?type=SRV&name=_minecraft._tcp.$FULL_DOMAIN" -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" -H "Content-Type: application/json" | jq -r '.result[0].id')
           if [ "$RECORD_ID" != "null" ] && [ -n "$RECORD_ID" ]; then
              curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/dns_records/$RECORD_ID" -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" -H "Content-Type: application/json" -d "$JSON_DATA"
@@ -100,24 +82,10 @@ jobs:
              curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/dns_records" -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" -H "Content-Type: application/json" -d "$JSON_DATA"
           fi
           
-          cd engine
-          mkdir -p ip
-          FILE="ip/${{ github.event.inputs.username }}.json"
-          
-          if [ ! -f "$FILE" ]; then
-            echo "{}" > "$FILE"
-          fi
-          
-          jq ".[\"${{ github.event.inputs.instance_id }}\"] = {\"ip\": \"$FULL_DOMAIN\", \"ws\": \"$CF_URL\"}" "$FILE" > tmp.json && mv tmp.json "$FILE"
-          
-          git config user.name "Absora Engine"
-          git config user.email "engine@absora.com"
-          git add ip/
-          git commit -m "Endpoints for ${{ github.event.inputs.username }} Inst ${{ github.event.inputs.instance_id }}" || echo "No changes"
-          git pull --rebase origin main || true
-          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git HEAD:main
+          # NEW: FAST MYSQL IP UPDATE
+          curl -X POST "http://YOUR_DOMAIN.COM/update_ip.php" -d "secret=absora_super_secret_relay_key&username=${{ github.event.inputs.username }}&instance_id=${{ github.event.inputs.instance_id }}&ip=$FULL_DOMAIN&ws=$CF_URL"
 
-      - name: Ignite Server Core
+      - name: Ignite Server
         run: |
           cd server-env
           echo "eula=true" > eula.txt
@@ -128,34 +96,20 @@ jobs:
           if [ "$RAM" == "4G" ]; then ALLOWED_CORES="0"; elif [ "$RAM" == "6G" ]; then ALLOWED_CORES="0,1"; else ALLOWED_CORES="0-$((TOTAL_CORES-1))"; fi
           taskset -c $ALLOWED_CORES node server.js ${{ github.event.inputs.username }} $RAM
 
-      - name: Save Data & Scrub Registry
+      - name: Save & Clean Up
         if: always()
         run: |
-          rm -f server-env/server.jar server-env/server.js
-          rm -rf server-env/node_modules server-env/package.json server-env/package-lock.json
-          
+          rm -f server-env/server.jar server-env/server.js && rm -rf server-env/node_modules server-env/package.json server-env/package-lock.json
           cd storage
-          git config user.name "Absora Engine"
-          git config user.email "engine@absora.com"
+          git config user.name "Absora Engine" && git config user.email "engine@absora.com"
           git pull https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git main --rebase || true
-          
           mkdir -p ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}
           cp -r ../server-env/* ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/
-          
-          git add .
-          git commit -m "Save session ${{ github.event.inputs.instance_id }} for ${{ github.event.inputs.username }}" || echo "No changes"
+          git add . && git commit -m "Save session" || echo "No changes"
           git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main
-
-          cd ../engine
-          FILE="ip/${{ github.event.inputs.username }}.json"
-          if [ -f "$FILE" ]; then
-             jq "del(.[\"${{ github.event.inputs.instance_id }}\"])" "$FILE" > tmp.json && mv tmp.json "$FILE"
-             git add ip/
-             git commit -m "Server offline: scrub IP for Inst ${{ github.event.inputs.instance_id }}" || echo "Already removed"
-             git pull --rebase origin main || true
-             git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git HEAD:main
-          fi
-
-          # --- TRIGGER THE RELAY BATON PASS ---
-          # IMPORTANT: REPLACE THIS URL WITH YOUR ACTUAL INFINITYFREE DOMAIN!
-          curl -s "https://abmchost.rf.gd/relay.php?user=${{ github.event.inputs.username }}&instance=${{ github.event.inputs.instance_id }}"
+          
+          # CLEAR IP FROM MYSQL
+          curl -X POST "http://YOUR_DOMAIN.COM/update_ip.php" -d "secret=absora_super_secret_relay_key&username=${{ github.event.inputs.username }}&instance_id=${{ github.event.inputs.instance_id }}&ip=&ws="
+          
+          # TRIGGER RELAY
+          curl -s "http://YOUR_DOMAIN.COM/relay.php?user=${{ github.event.inputs.username }}&instance=${{ github.event.inputs.instance_id }}"
