@@ -1,0 +1,40 @@
+name: Absora Internal Cloud Backup
+on:
+  workflow_dispatch:
+    inputs:
+      username:
+        required: true
+      instance_id:
+        required: true
+
+jobs:
+  backup-world:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch User Storage Array
+        run: |
+          git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git storage
+          mkdir -p workspace
+          cp -r storage/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/* workspace/ || echo "Empty instance"
+
+      - name: Compile World Archive
+        run: |
+          cd workspace
+          DATE_STAMP=$(date +%Y-%m-%d_%H-%M)
+          zip -r ../Backup_${DATE_STAMP}.zip world world_nether world_the_end || echo "No world found"
+
+      - name: Save Archive to Storage Repo
+        run: |
+          cd storage
+          mkdir -p backups/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}
+          mv ../Backup_*.zip backups/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/
+          
+          git config user.name "Absora Backup Compiler"
+          git config user.email "engine@absora.com"
+          git pull origin main --rebase
+          git add backups/
+          git commit -m "Automated Cloud Archive for ${{ github.event.inputs.username }}" || true
+          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main
+          
+          # Ping InfinityFree Database to say Backup Complete!
+          curl -X POST "http://abmchost.rf.gd/get_backup.php" -d "secret=absora_super_secret_relay_key&username=${{ github.event.inputs.username }}&instance_id=${{ github.event.inputs.instance_id }}&url=Internal%20Storage"
