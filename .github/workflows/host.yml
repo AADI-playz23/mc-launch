@@ -82,8 +82,8 @@ jobs:
              curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/dns_records" -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" -H "Content-Type: application/json" -d "$JSON_DATA"
           fi
           
-          # NEW: FAST MYSQL IP UPDATE
-          curl -X POST "https://abmchost.rf.gd/update_ip.php" -d "secret=absora_super_secret_relay_key&username=${{ github.event.inputs.username }}&instance_id=${{ github.event.inputs.instance_id }}&ip=$FULL_DOMAIN&ws=$CF_URL"
+          # NEW: DISGUISED MYSQL IP UPDATE
+          curl -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -X POST "http://abmchost.rf.gd/update_ip.php" -d "secret=absora_super_secret_relay_key&username=${{ github.event.inputs.username }}&instance_id=${{ github.event.inputs.instance_id }}&ip=$FULL_DOMAIN&ws=$CF_URL"
 
       - name: Ignite Server
         run: |
@@ -109,7 +109,7 @@ jobs:
           git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main
           
           # CLEAR IP FROM MYSQL
-          curl -X POST "https://abmchost.rf.gd/update_ip.php" -d "secret=absora_super_secret_relay_key&username=${{ github.event.inputs.username }}&instance_id=${{ github.event.inputs.instance_id }}&ip=&ws="
+          curl -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -X POST "http://abmchost.rf.gd/update_ip.php" -d "secret=absora_super_secret_relay_key&username=${{ github.event.inputs.username }}&instance_id=${{ github.event.inputs.instance_id }}&ip=&ws="
           
           # TRIGGER RELAY
-          curl -s "https://abmchost.rf.gd/relay.php?user=${{ github.event.inputs.username }}&instance=${{ github.event.inputs.instance_id }}"
+          curl -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -s "http://abmchost.rf.gd/relay.php?user=${{ github.event.inputs.username }}&instance=${{ github.event.inputs.instance_id }}"
