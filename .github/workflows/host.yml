@@ -109,7 +109,7 @@ jobs:
           git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main
           
           # CLEAR IP FROM MYSQL
-          curl -X POST "http://YOUR_DOMAIN.COM/update_ip.php" -d "secret=absora_super_secret_relay_key&username=${{ github.event.inputs.username }}&instance_id=${{ github.event.inputs.instance_id }}&ip=&ws="
+          curl -X POST "https://abmchost.rf.gd/update_ip.php" -d "secret=absora_super_secret_relay_key&username=${{ github.event.inputs.username }}&instance_id=${{ github.event.inputs.instance_id }}&ip=&ws="
           
           # TRIGGER RELAY
-          curl -s "http://YOUR_DOMAIN.COM/relay.php?user=${{ github.event.inputs.username }}&instance=${{ github.event.inputs.instance_id }}"
+          curl -s "https://abmchost.rf.gd/relay.php?user=${{ github.event.inputs.username }}&instance=${{ github.event.inputs.instance_id }}"
