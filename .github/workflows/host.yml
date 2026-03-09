@@ -100,17 +100,14 @@ jobs:
              curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/dns_records" -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" -H "Content-Type: application/json" -d "$JSON_DATA"
           fi
           
-          # --- ABSORA MASTER IP REGISTRY ---
           cd engine
           mkdir -p ip
           FILE="ip/${{ github.event.inputs.username }}.json"
           
-          # If the file doesn't exist yet, create an empty JSON object
           if [ ! -f "$FILE" ]; then
             echo "{}" > "$FILE"
           fi
           
-          # Use JQ to inject this specific instance's data into the master file
           jq ".[\"${{ github.event.inputs.instance_id }}\"] = {\"ip\": \"$FULL_DOMAIN\", \"ws\": \"$CF_URL\"}" "$FILE" > tmp.json && mv tmp.json "$FILE"
           
           git config user.name "Absora Engine"
@@ -149,7 +146,6 @@ jobs:
           git commit -m "Save session ${{ github.event.inputs.instance_id }} for ${{ github.event.inputs.username }}" || echo "No changes"
           git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main
 
-          # --- REMOVE INSTANCE IP FROM MASTER REGISTRY ---
           cd ../engine
           FILE="ip/${{ github.event.inputs.username }}.json"
           if [ -f "$FILE" ]; then
@@ -159,3 +155,7 @@ jobs:
              git pull --rebase origin main || true
              git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git HEAD:main
           fi
+
+          # --- TRIGGER THE RELAY BATON PASS ---
+          # IMPORTANT: REPLACE THIS URL WITH YOUR ACTUAL INFINITYFREE DOMAIN!
+          curl -s "https://abmchost.rf.gd/relay.php?user=${{ github.event.inputs.username }}&instance=${{ github.event.inputs.instance_id }}"
