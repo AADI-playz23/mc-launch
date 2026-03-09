@@ -19,6 +19,9 @@ on:
       wipe_data:
         required: false
         default: 'false'
+      uptime_quota:
+        required: false
+        default: '6'
 
 jobs:
   run-server:
@@ -38,17 +41,14 @@ jobs:
         with:
           path: orchestrator
 
-      - name: Download Storage
+      - name: Download Storage & Engine Repos
         run: |
+          git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git engine
           git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git storage
           mkdir -p server-env
           if [ "${{ github.event.inputs.wipe_data }}" == "true" ]; then
              rm -rf storage/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }} || true
-             cd storage
-             git config user.name "Absora Engine" && git config user.email "engine@absora.com"
-             git add . && git commit -m "Wipe data" || true
-             git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main
-             cd ..
+             cd storage && git config user.name "Absora Engine" && git config user.email "engine@absora.com" && git add . && git commit -m "Wipe data" || true && git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main && cd ..
           else
              cp -r storage/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/* server-env/ || echo "New instance."
           fi
@@ -59,7 +59,7 @@ jobs:
           DOWNLOAD_URL=$(jq -r ".versions[\"$VERSION\"]" orchestrator/versions.json)
           wget -O server-env/server.jar "$DOWNLOAD_URL"
 
-      - name: Start Tunnels & Push IP to MySQL
+      - name: Start Tunnels & Push IP directly to GitHub Storage
         run: |
           wget https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz && tar -xzf bore-*.tar.gz && sudo mv bore /usr/local/bin/
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb && sudo dpkg -i cloudflared-linux-amd64.deb
@@ -82,8 +82,16 @@ jobs:
              curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/dns_records" -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" -H "Content-Type: application/json" -d "$JSON_DATA"
           fi
           
-          # NEW: DISGUISED MYSQL IP UPDATE
-          curl -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -X POST "http://abmchost.rf.gd/update_ip.php" -d "secret=absora_super_secret_relay_key&username=${{ github.event.inputs.username }}&instance_id=${{ github.event.inputs.instance_id }}&ip=$FULL_DOMAIN&ws=$CF_URL"
+          # UNBLOCKABLE GITHUB IP PUSH (Bypasses InfinityFree completely)
+          cd engine
+          mkdir -p ip
+          FILE="ip/${{ github.event.inputs.username }}.json"
+          if [ ! -f "$FILE" ]; then echo "{}" > "$FILE"; fi
+          jq ".[\"${{ github.event.inputs.instance_id }}\"] = {\"ip\": \"$FULL_DOMAIN\", \"ws\": \"$CF_URL\"}" "$FILE" > tmp.json && mv tmp.json "$FILE"
+          git config user.name "Absora Engine" && git config user.email "engine@absora.com"
+          git add ip/ && git commit -m "Endpoints for ${{ github.event.inputs.username }}" || true
+          git pull --rebase origin main || true
+          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git HEAD:main
 
       - name: Ignite Server
         run: |
@@ -96,20 +104,42 @@ jobs:
           if [ "$RAM" == "4G" ]; then ALLOWED_CORES="0"; elif [ "$RAM" == "6G" ]; then ALLOWED_CORES="0,1"; else ALLOWED_CORES="0-$((TOTAL_CORES-1))"; fi
           taskset -c $ALLOWED_CORES node server.js ${{ github.event.inputs.username }} $RAM
 
-      - name: Save & Clean Up
+      - name: Save & Relay Protocol
         if: always()
         run: |
-          rm -f server-env/server.jar server-env/server.js && rm -rf server-env/node_modules server-env/package.json server-env/package-lock.json
-          cd storage
+          cd server-env
+          # Check if the user manually clicked Stop
+          if [ -f stop.flag ]; then RELAY="false"; else RELAY="true"; fi
+          rm -f server.jar server.js stop.flag && rm -rf node_modules package.json package-lock.json
+          
+          # SAVE MAP DATA
+          cd ../storage
           git config user.name "Absora Engine" && git config user.email "engine@absora.com"
           git pull https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git main --rebase || true
           mkdir -p ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}
           cp -r ../server-env/* ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/
-          git add . && git commit -m "Save session" || echo "No changes"
+          git add . && git commit -m "Save session" || true
           git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main
           
-          # CLEAR IP FROM MYSQL
-          curl -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -X POST "http://abmchost.rf.gd/update_ip.php" -d "secret=absora_super_secret_relay_key&username=${{ github.event.inputs.username }}&instance_id=${{ github.event.inputs.instance_id }}&ip=&ws="
+          # DELETE IP FROM GITHUB
+          cd ../engine
+          FILE="ip/${{ github.event.inputs.username }}.json"
+          if [ -f "$FILE" ]; then
+             jq "del(.[\"${{ github.event.inputs.instance_id }}\"])" "$FILE" > tmp.json && mv tmp.json "$FILE"
+             git add ip/ && git commit -m "Server offline" || true
+             git pull --rebase origin main || true
+             git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git HEAD:main
+          fi
           
-          # TRIGGER RELAY
-          curl -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -s "http://abmchost.rf.gd/relay.php?user=${{ github.event.inputs.username }}&instance=${{ github.event.inputs.instance_id }}"
+          # NATIVE GITHUB RELAY TRIGGER (Bypasses InfinityFree completely)
+          QUOTA=${{ github.event.inputs.uptime_quota }}
+          NEW_QUOTA=$((QUOTA - 6))
+          if [ "$RELAY" == "true" ] && [ "$NEW_QUOTA" -gt 0 ]; then
+             echo "Relaying to next node. Hours remaining: $NEW_QUOTA"
+             curl -X POST "https://api.github.com/repos/AADI-playz23/mc-launch/actions/workflows/host.yml/dispatches" \
+             -H "Accept: application/vnd.github.v3+json" \
+             -H "Authorization: token ${{ secrets.ABSORA_PAT }}" \
+             -d "{\"ref\":\"main\",\"inputs\":{\"username\":\"${{ github.event.inputs.username }}\",\"instance_id\":\"${{ github.event.inputs.instance_id }}\",\"version\":\"${{ github.event.inputs.version }}\",\"servername\":\"${{ github.event.inputs.servername }}\",\"ram\":\"${{ github.event.inputs.ram }}\",\"wipe_data\":\"false\",\"uptime_quota\":\"$NEW_QUOTA\"}}"
+          else
+             echo "Quota exhausted or intentional stop."
+          fi
