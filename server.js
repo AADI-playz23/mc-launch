@@ -18,6 +18,35 @@ let logHistory = [];
 let mcServer;
 let intentionalStop = false;
 
+const broadcast = (text) => {
+    logHistory.push(text);
+    if (logHistory.length > MAX_LOG_HISTORY) logHistory.shift(); 
+    activeClients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) { ws.send(JSON.stringify({ text: text })); } });
+};
+
+// --- ABSORA RELAY KILLSWITCH ---
+// Safely shut down at 5 hours and 45 minutes to prevent data corruption
+const MAX_RUNTIME_MINUTES = 345; 
+let elapsedMinutes = 0;
+
+setInterval(() => {
+    elapsedMinutes++;
+    if (elapsedMinutes === 340) {
+        broadcast("\n[Absora Cloud] WARNING: Approaching node maximum lifespan. Cloud relay transfer initiating in 5 minutes. Server will briefly restart.");
+        if (mcServer) mcServer.stdin.write('say [Absora] Server cloud node transferring in 5 minutes! You will be disconnected briefly.\n');
+    }
+    if (elapsedMinutes >= MAX_RUNTIME_MINUTES) {
+        broadcast("\n[Absora Cloud] Initiating automated Relay Transfer. Saving data...");
+        intentionalStop = true;
+        if (mcServer) {
+            mcServer.stdin.write('kick @a [Absora] Cloud node transfer in progress. Please reconnect in 60 seconds!\n');
+            mcServer.stdin.write('save-all\n');
+            setTimeout(() => { mcServer.stdin.write('stop\n'); }, 3000);
+        }
+    }
+}, 60000); // Check every 1 minute
+// -------------------------------
+
 setInterval(() => {
     if (activeClients.length > 0) {
         const realTotal = os.totalmem();
@@ -62,12 +91,6 @@ wss.on('connection', (ws) => {
     });
     ws.on('close', () => { activeClients = activeClients.filter(client => client !== ws); });
 });
-
-const broadcast = (text) => {
-    logHistory.push(text);
-    if (logHistory.length > MAX_LOG_HISTORY) logHistory.shift(); 
-    activeClients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) { ws.send(JSON.stringify({ text: text })); } });
-};
 
 function startMinecraft() {
     broadcast(`[Absora] Booting Engine with ${assignedRam} RAM allocation...\n`);
