@@ -1,0 +1,38 @@
+name: Absora World Restoration
+on:
+  workflow_dispatch:
+    inputs:
+      username:
+        required: true
+      instance_id:
+        required: true
+      backup_file:
+        required: true
+
+jobs:
+  restore-world:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Storage Array
+        run: git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git storage
+
+      - name: Wipe Current World & Extract Backup
+        run: |
+          cd storage
+          # Delete current world folders to prevent corruption
+          rm -rf ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/world
+          rm -rf ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/world_nether
+          rm -rf ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/world_the_end
+          
+          # Unzip the target backup directly into the instance folder
+          unzip backups/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/${{ github.event.inputs.backup_file }} -d ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/
+
+      - name: Commit Restored Data
+        run: |
+          cd storage
+          git config user.name "Absora Restoration Engine"
+          git config user.email "engine@absora.com"
+          git pull origin main --rebase
+          git add ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/
+          git commit -m "Restored world from snapshot: ${{ github.event.inputs.backup_file }}" || true
+          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main
