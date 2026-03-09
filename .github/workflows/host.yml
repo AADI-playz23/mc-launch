@@ -9,13 +9,10 @@ on:
         default: '1'
       version:
         required: true
-        default: '1.21.11'
       servername:
         required: true
-        default: 'play'
       ram:
         required: true
-        default: '4G'
       wipe_data:
         required: false
         default: 'false'
@@ -53,11 +50,47 @@ jobs:
              cp -r storage/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/* server-env/ || echo "New instance."
           fi
 
-      - name: Fetch Engine
+      - name: Fetch & Process Engine
         run: |
-          VERSION=${{ github.event.inputs.version }}
-          DOWNLOAD_URL=$(jq -r ".versions[\"$VERSION\"]" orchestrator/versions.json)
-          wget -O server-env/server.jar "$DOWNLOAD_URL"
+          cd server-env
+          VERSION="${{ github.event.inputs.version }}"
+          DOWNLOAD_URL=""
+          
+          # Search all JSON files for the requested version
+          for file in ../orchestrator/*.json; do
+             URL=$(jq -r ".\"$VERSION\" // .versions[\"$VERSION\"] // empty" "$file" 2>/dev/null)
+             if [ -n "$URL" ]; then
+                DOWNLOAD_URL=$URL
+                break
+             fi
+          done
+          
+          if [ -z "$DOWNLOAD_URL" ]; then
+             echo "Error: Could not find version $VERSION in database."
+             exit 1
+          fi
+          
+          echo "Downloading from: $DOWNLOAD_URL"
+          wget -O downloaded.jar "$DOWNLOAD_URL"
+          
+          # --- FLAWLESS INSTALLER DETECTION ---
+          if [[ "$DOWNLOAD_URL" == *"-installer.jar"* || "$DOWNLOAD_URL" == *"neoforge"* ]]; then
+              echo "Installer detected! Running forge/neoforge installation sequence..."
+              java -jar downloaded.jar --installServer
+              
+              # Clean up the installer
+              rm downloaded.jar
+              
+              # Legacy Forge (1.12.2 - 1.16.5) creates a forge-VERSION.jar or forge-VERSION-universal.jar
+              if ls forge-*-universal.jar 1> /dev/null 2>&1; then
+                  mv forge-*-universal.jar server.jar
+              elif ls forge-*.jar 1> /dev/null 2>&1; then
+                  FORGE_JAR=$(ls forge-*.jar | head -n 1)
+                  mv "$FORGE_JAR" server.jar
+              fi
+          else
+              mv downloaded.jar server.jar
+          fi
 
       - name: Start Tunnels & Push IP directly to GitHub Storage
         run: |
@@ -108,9 +141,11 @@ jobs:
         if: always()
         run: |
           cd server-env
-          # Check if the user manually clicked Stop
-          if [ -f stop.flag ]; then RELAY="false"; else RELAY="true"; fi
-          rm -f server.jar server.js stop.flag && rm -rf node_modules package.json package-lock.json
+          
+          # THE FIX: ONLY RELAY IF THE 5.5 HOUR TIMER SPECIFICALLY CREATED THE FLAG
+          if [ -f relay.flag ]; then RELAY="true"; else RELAY="false"; fi
+          
+          rm -f server.jar server.js relay.flag downloaded.jar && rm -rf node_modules package.json package-lock.json
           
           # SAVE MAP DATA
           cd ../storage
@@ -131,9 +166,10 @@ jobs:
              git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git HEAD:main
           fi
           
-          # NATIVE GITHUB RELAY TRIGGER (Bypasses InfinityFree completely)
+          # NATIVE GITHUB RELAY TRIGGER
           QUOTA=${{ github.event.inputs.uptime_quota }}
           NEW_QUOTA=$((QUOTA - 6))
+          
           if [ "$RELAY" == "true" ] && [ "$NEW_QUOTA" -gt 0 ]; then
              echo "Relaying to next node. Hours remaining: $NEW_QUOTA"
              curl -X POST "https://api.github.com/repos/AADI-playz23/mc-launch/actions/workflows/host.yml/dispatches" \
@@ -141,5 +177,5 @@ jobs:
              -H "Authorization: token ${{ secrets.ABSORA_PAT }}" \
              -d "{\"ref\":\"main\",\"inputs\":{\"username\":\"${{ github.event.inputs.username }}\",\"instance_id\":\"${{ github.event.inputs.instance_id }}\",\"version\":\"${{ github.event.inputs.version }}\",\"servername\":\"${{ github.event.inputs.servername }}\",\"ram\":\"${{ github.event.inputs.ram }}\",\"wipe_data\":\"false\",\"uptime_quota\":\"$NEW_QUOTA\"}}"
           else
-             echo "Quota exhausted or intentional stop."
+             echo "Server stopped manually or crashed. Halting relay chain."
           fi
