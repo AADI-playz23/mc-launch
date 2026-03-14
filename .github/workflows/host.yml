@@ -1,0 +1,133 @@
+name: Run Server
+on:
+  workflow_dispatch:
+    inputs:
+      username:
+        required: true
+      instance_id:
+        required: true
+      ram:
+        required: true
+      java:
+        required: true
+      software:
+        required: false
+        default: 'paper.json'
+      version:
+        required: false
+        default: 'latest'
+
+jobs:
+  run-server:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Dynamic Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: ${{ github.event.inputs.java }}
+
+      - name: Fetch Orchestrator Scripts
+        uses: actions/checkout@v3
+
+      - name: Pull Cloud Storage Array
+        run: |
+          git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git storage_repo
+          mkdir -p server-env
+          cp -r storage_repo/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/* server-env/ 2>/dev/null || echo "New instance — starting fresh."
+
+      - name: Install Node Dependencies
+        run: npm install ws
+
+      - name: Start Tunnel & Register IP
+        run: |
+          # Install localtunnel
+          npm install -g localtunnel
+
+          # Start tunnel in background, capture URL
+          lt --port 8080 > /tmp/tunnel.log 2>&1 &
+          LT_PID=$!
+          echo "LT_PID=$LT_PID" >> $GITHUB_ENV
+
+          # Wait up to 30s for a valid URL
+          for i in $(seq 1 30); do
+            TUNNEL_LINE=$(cat /tmp/tunnel.log 2>/dev/null | grep -o 'https://[a-zA-Z0-9.-]*\.loca\.lt' | head -1)
+            if [ -n "$TUNNEL_LINE" ]; then
+              break
+            fi
+            sleep 1
+          done
+
+          if [ -z "$TUNNEL_LINE" ]; then
+            echo "::error::Tunnel failed to start. Check localtunnel logs."
+            cat /tmp/tunnel.log
+            exit 1
+          fi
+
+          # Convert https:// → wss://
+          WS_URL=$(echo "$TUNNEL_LINE" | sed 's|https://|wss://|')
+          echo "Tunnel ready: $WS_URL"
+
+          # Push WS URL + username to the PHP backend (now DB-backed)
+          curl -s -X POST \
+            -d "instance_id=${{ github.event.inputs.instance_id }}&ws_url=${WS_URL}&status=online&username=${{ github.event.inputs.username }}" \
+            "http://abmchost.rf.gd/update_ip.php"
+
+      - name: Ignite Minecraft Server
+        run: |
+          cd server-env
+          node ../server.js \
+            "${{ github.event.inputs.username }}" \
+            "${{ github.event.inputs.ram }}" \
+            "${{ github.event.inputs.software }}" \
+            "${{ github.event.inputs.version }}"
+
+      - name: Mark Instance Offline
+        if: always()
+        run: |
+          curl -s -X POST \
+            -d "instance_id=${{ github.event.inputs.instance_id }}&ws_url=&status=offline&username=${{ github.event.inputs.username }}" \
+            "http://abmchost.rf.gd/update_ip.php" || true
+
+      - name: Save & Relay Protocol
+        if: always()
+        run: |
+          echo "Preparing instance directory..."
+          TARGET_DIR="storage_repo/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}"
+          mkdir -p "$TARGET_DIR"
+
+          echo "Syncing server files to cloud..."
+          rsync -av --exclude='storage_repo' --exclude='*.log' server-env/ "$TARGET_DIR/"
+
+          echo "Pushing state to cloud..."
+          cd storage_repo
+          git config user.name "Absora Relay Engine"
+          git config user.email "relay@absora.com"
+          git pull origin main --rebase || true
+          git add .
+          git diff --staged --quiet || git commit -m "Relay save: ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}"
+          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main
+
+      - name: Trigger Next Relay (if relay flag set)
+        if: always()
+        run: |
+          if [ -f "server-env/relay.flag" ]; then
+            echo "Relay flag detected — dispatching next runner..."
+            curl -s -X POST \
+              -H "Accept: application/vnd.github.v3+json" \
+              -H "Authorization: token ${{ secrets.ABSORA_PAT }}" \
+              https://api.github.com/repos/AADI-playz23/mc-launch/actions/workflows/run.yml/dispatches \
+              -d '{
+                "ref": "main",
+                "inputs": {
+                  "username":    "${{ github.event.inputs.username }}",
+                  "instance_id": "${{ github.event.inputs.instance_id }}",
+                  "ram":         "${{ github.event.inputs.ram }}",
+                  "java":        "${{ github.event.inputs.java }}",
+                  "software":    "${{ github.event.inputs.software }}",
+                  "version":     "${{ github.event.inputs.version }}"
+                }
+              }'
+          else
+            echo "No relay flag — clean shutdown."
+          fi
