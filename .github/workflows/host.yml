@@ -20,7 +20,7 @@ on:
 jobs:
   run-server:
     runs-on: ubuntu-latest
-    timeout-minutes: 355 # Prevents GitHub from killing the runner before the relay save finishes!
+    timeout-minutes: 355 
     steps:
       - name: Setup Dynamic Java
         uses: actions/setup-java@v3
@@ -42,15 +42,11 @@ jobs:
 
       - name: Start Tunnel & Register IP
         run: |
-          # Install localtunnel
           npm install -g localtunnel
-
-          # Start tunnel in background, capture URL
           lt --port 8080 > /tmp/tunnel.log 2>&1 &
           LT_PID=$!
           echo "LT_PID=$LT_PID" >> $GITHUB_ENV
 
-          # Wait up to 30s for a valid URL
           for i in $(seq 1 30); do
             TUNNEL_LINE=$(cat /tmp/tunnel.log 2>/dev/null | grep -o 'https://[a-zA-Z0-9.-]*\.loca\.lt' | head -1)
             if [ -n "$TUNNEL_LINE" ]; then
@@ -65,14 +61,21 @@ jobs:
             exit 1
           fi
 
-          # Convert https:// → wss://
           WS_URL=$(echo "$TUNNEL_LINE" | sed 's|https://|wss://|')
           echo "Tunnel ready: $WS_URL"
 
-          # Push WS URL + username to the PHP backend (Spoofing browser to bypass InfinityFree)
-          curl -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -X POST \
-            -d "instance_id=${{ github.event.inputs.instance_id }}&ws_url=${WS_URL}&status=online&username=${{ github.event.inputs.username }}" \
-            "http://abmchost.rf.gd/update_ip.php" || echo "Warning: IP push blocked by host, but continuing boot..."
+          # FIREWALL BYPASS: Push IP directly to Cloud Storage via Git
+          cd storage_repo
+          mkdir -p ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}
+          cd ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}
+          
+          echo "{\"ws\": \"$WS_URL\", \"status\": \"online\", \"updated\": $(date +%s)}" > routing.json
+          
+          git config user.name "Absora Relay Engine"
+          git config user.email "relay@absora.com"
+          git add routing.json
+          git commit -m "Node Route Update: Online" || true
+          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main
 
       - name: Ignite Minecraft Engine
         run: |
@@ -83,14 +86,6 @@ jobs:
             "${{ github.event.inputs.software }}" \
             "${{ github.event.inputs.version }}"
 
-      - name: Mark Instance Offline
-        if: always()
-        run: |
-          # Same bypass applied here to ensure offline status syncs properly
-          curl -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -X POST \
-            -d "instance_id=${{ github.event.inputs.instance_id }}&ws_url=&status=offline&username=${{ github.event.inputs.username }}" \
-            "http://abmchost.rf.gd/update_ip.php" || true
-
       - name: Save & Relay Protocol
         if: always()
         run: |
@@ -98,9 +93,13 @@ jobs:
           TARGET_DIR="storage_repo/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}"
           mkdir -p "$TARGET_DIR"
 
+          # Write offline routing status before sync
+          echo "{\"ws\": \"\", \"status\": \"offline\", \"updated\": $(date +%s)}" > server-env/routing.json
+
           echo "Syncing server files to cloud..."
-          # Exclude the git repo itself and temporary log files
           rsync -av --exclude='storage_repo' --exclude='*.log' server-env/ "$TARGET_DIR/"
+          # Explicitly copy the absora.log so console history is saved!
+          cp server-env/absora.log "$TARGET_DIR/" 2>/dev/null || true
 
           echo "Pushing state to cloud..."
           cd storage_repo
@@ -116,7 +115,6 @@ jobs:
         run: |
           if [ -f "server-env/relay.flag" ]; then
             echo "Relay flag detected — dispatching next runner..."
-            # Target updated to host.yml to match the file name
             curl -s -X POST \
               -H "Accept: application/vnd.github.v3+json" \
               -H "Authorization: token ${{ secrets.ABSORA_PAT }}" \
