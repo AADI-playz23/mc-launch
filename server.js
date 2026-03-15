@@ -23,6 +23,10 @@ let serverStarted = false;
 const broadcast = (text) => {
     logHistory.push(text);
     if (logHistory.length > MAX_LOG_HISTORY) logHistory.shift();
+    
+    // Save to file so history survives refreshes and days!
+    try { fs.appendFileSync('absora.log', text); } catch(e) {}
+
     activeClients.forEach(ws => {
         if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ text }));
@@ -124,7 +128,6 @@ wss.on('close', () => clearInterval(heartbeatInterval));
 
 // ── Async Minecraft server launcher ──────────────────────────────────────────
 async function startMinecraft() {
-    // Universal EULA bypass
     if (!fs.existsSync('eula.txt')) {
         fs.writeFileSync('eula.txt', 'eula=true\n');
         broadcast("[Absora Engine] Auto-accepted Minecraft EULA.\n");
@@ -137,7 +140,6 @@ async function startMinecraft() {
     const existingJars = fs.readdirSync('.').filter(f => f.endsWith('.jar') && !f.includes('installer') && f !== 'server.js');
     const hasRunSh = fs.existsSync('run.sh');
 
-    // Download & Install Sequence
     if (!hasRunSh && existingJars.length === 0) {
         if (versionKey) {
             broadcast(`\n[Absora Engine] Engine not found. Auto-Downloading: ${versionKey}...\n`);
@@ -151,7 +153,6 @@ async function startMinecraft() {
                 broadcast(`[Absora Engine] Fetching: ${downloadUrl}\n`);
                 execSync(`wget -q -O server.jar "${downloadUrl}"`);
 
-                // Intercept Modded Installers (Keeps Node Event Loop alive during install)
                 if (softwareFile === 'forge.json') {
                     broadcast(`\n[Absora Engine] Executing Modded Installer (This may take 2-3 minutes)...\n`);
                     await new Promise((resolve) => {
@@ -175,10 +176,8 @@ async function startMinecraft() {
         }
     }
 
-    // Execution Sequence
     if (fs.existsSync('run.sh')) {
         fs.writeFileSync('user_jvm_args.txt', `-Xms${assignedRam} -Xmx${assignedRam}`);
-        // Strip pause command from run.sh so it doesn't hang headless runners
         try { let rs = fs.readFileSync('run.sh', 'utf8'); if (rs.includes('pause')) fs.writeFileSync('run.sh', rs.replace(/pause/ig, '')); } catch(e) {}
         launchCmd = 'sh';
         launchArgs = ['run.sh', 'nogui'];
@@ -200,7 +199,6 @@ async function startMinecraft() {
         process.stdout.write(text);
         broadcast(text);
         
-        // Universal Online Detection (Supports Vanilla, Forge, Bungee, Velocity)
         const lowerTxt = text.toLowerCase();
         if (lowerTxt.includes('done') || lowerTxt.includes('listening on') || lowerTxt.includes('started velocity') || lowerTxt.includes('startup done') || lowerTxt.includes('for help, type')) {
             if (!serverStarted) {
