@@ -67,15 +67,20 @@ jobs:
           # FIREWALL BYPASS: Push IP directly to Cloud Storage via Git
           cd storage_repo
           mkdir -p ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}
-          cd ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}
           
-          echo "{\"ws\": \"$WS_URL\", \"status\": \"online\", \"updated\": $(date +%s)}" > routing.json
+          echo "{\"ws\": \"$WS_URL\", \"status\": \"online\", \"updated\": $(date +%s)}" > ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/routing.json
           
           git config user.name "Absora Relay Engine"
           git config user.email "relay@absora.com"
-          git add routing.json
+          
+          # Commit FIRST, then Pull (with conflict override), then Push
+          git add .
           git commit -m "Node Route Update: Online" || true
-          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main
+          
+          for i in {1..5}; do
+            git pull origin main --rebase -X ours || true
+            git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main && break || sleep 3
+          done
 
       - name: Ignite Minecraft Engine
         run: |
@@ -98,17 +103,21 @@ jobs:
 
           echo "Syncing server files to cloud..."
           rsync -av --exclude='storage_repo' --exclude='*.log' server-env/ "$TARGET_DIR/"
-          # Explicitly copy the absora.log so console history is saved!
           cp server-env/absora.log "$TARGET_DIR/" 2>/dev/null || true
 
           echo "Pushing state to cloud..."
           cd storage_repo
           git config user.name "Absora Relay Engine"
           git config user.email "relay@absora.com"
-          git pull origin main --rebase || true
+          
+          # Commit FIRST, then Pull (with conflict override), then Push
           git add .
-          git diff --staged --quiet || git commit -m "Relay save: ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}"
-          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main
+          git commit -m "Relay save: ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}" || true
+          
+          for i in {1..5}; do
+            git pull origin main --rebase -X ours || true
+            git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main && break || sleep 3
+          done
 
       - name: Trigger Next Relay (If Flag Set)
         if: always()
