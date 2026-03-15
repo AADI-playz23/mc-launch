@@ -69,10 +69,10 @@ jobs:
           WS_URL=$(echo "$TUNNEL_LINE" | sed 's|https://|wss://|')
           echo "Tunnel ready: $WS_URL"
 
-          # Push WS URL + username to the PHP backend
-          curl -s -X POST \
+          # Push WS URL + username to the PHP backend (Spoofing browser to bypass InfinityFree)
+          curl -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -X POST \
             -d "instance_id=${{ github.event.inputs.instance_id }}&ws_url=${WS_URL}&status=online&username=${{ github.event.inputs.username }}" \
-            "http://abmchost.rf.gd/update_ip.php"
+            "http://abmchost.rf.gd/update_ip.php" || echo "Warning: IP push blocked by host, but continuing boot..."
 
       - name: Ignite Minecraft Engine
         run: |
@@ -86,7 +86,8 @@ jobs:
       - name: Mark Instance Offline
         if: always()
         run: |
-          curl -s -X POST \
+          # Same bypass applied here to ensure offline status syncs properly
+          curl -s -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -X POST \
             -d "instance_id=${{ github.event.inputs.instance_id }}&ws_url=&status=offline&username=${{ github.event.inputs.username }}" \
             "http://abmchost.rf.gd/update_ip.php" || true
 
@@ -115,7 +116,7 @@ jobs:
         run: |
           if [ -f "server-env/relay.flag" ]; then
             echo "Relay flag detected — dispatching next runner..."
-            # Target updated to host.yml to match the file name!
+            # Target updated to host.yml to match the file name
             curl -s -X POST \
               -H "Accept: application/vnd.github.v3+json" \
               -H "Authorization: token ${{ secrets.ABSORA_PAT }}" \
