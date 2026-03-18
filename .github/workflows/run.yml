@@ -42,55 +42,76 @@ jobs:
       - name: Install Node Dependencies
         run: npm install ws
 
-      # ── Tunnels start HERE — only when runner is live and user clicked Start ──
-      # The console.html Start button triggers this entire workflow.
-      # Nothing below runs until the user explicitly clicks Start.
-      - name: Start Tunnels & Update Cloudflare DNS
+      - name: Start Tunnels & Update DNS
         run: |
 
-          # ── Install bore ──────────────────────────────────────────────
+          # ════════════════════════════════════════════════════════════════
+          #  TUNNEL 1 — WebSocket (port 8080)
+          #  Cloudflare Tunnel → permanent wss://servername.astrocore.qzz.io
+          #  Token created ONCE in Cloudflare Zero Trust dashboard.
+          #  Same hostname every relay — never changes.
+          # ════════════════════════════════════════════════════════════════
+          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+            -o /tmp/cloudflared
+          chmod +x /tmp/cloudflared
+
+          # Run tunnel using the token stored in GitHub secrets
+          # In Zero Trust dashboard this tunnel is configured to route
+          # servername.astrocore.qzz.io → localhost:8080
+          /tmp/cloudflared tunnel --no-autoupdate run \
+            --token "${{ secrets.CF_TUNNEL_TOKEN }}" \
+            > /tmp/cf_tunnel.log 2>&1 &
+          CF_PID=$!
+
+          # Wait up to 45s for tunnel to connect
+          for i in $(seq 1 45); do
+            if grep -qiE "registered|connection established|connected to" /tmp/cf_tunnel.log 2>/dev/null; then
+              echo "Cloudflare tunnel connected (attempt $i)"
+              break
+            fi
+            sleep 1
+          done
+          echo "=== cloudflared log ==="
+          cat /tmp/cf_tunnel.log || true
+
+          SERVERNAME="${{ github.event.inputs.servername }}"
+          # WebSocket URL is PERMANENT — same every relay, no random ports
+          WS_URL="wss://${SERVERNAME}.astrocore.qzz.io"
+          echo "WS → $WS_URL (Cloudflare Tunnel — permanent)"
+
+          # ════════════════════════════════════════════════════════════════
+          #  TUNNEL 2 — Minecraft TCP (port 25565)
+          #  bore → random port → Cloudflare DNS A+SRV updated each relay
+          #  Players always use servername.astrocore.qzz.io (SRV handles port)
+          # ════════════════════════════════════════════════════════════════
           curl -sSL https://github.com/ekzhang/bore/releases/download/v0.5.0/bore-v0.5.0-x86_64-unknown-linux-musl.tar.gz \
             | tar -xz -C /tmp
           chmod +x /tmp/bore
 
-          # ── Bore tunnel 1: WebSocket port 8080 (console panel) ────────
-          /tmp/bore local 8080 --to bore.pub > /tmp/bore_ws.log 2>&1 &
-
-          # ── Bore tunnel 2: Minecraft TCP port 25565 (players) ─────────
           /tmp/bore local 25565 --to bore.pub > /tmp/bore_mc.log 2>&1 &
 
-          # ── Wait up to 45s for both tunnels ───────────────────────────
+          # Wait up to 45s for bore MC port
           for i in $(seq 1 45); do
-            WS_PORT=$(grep -oP 'listening at bore\.pub:\K[0-9]+' /tmp/bore_ws.log 2>/dev/null | head -1)
             MC_PORT=$(grep -oP 'listening at bore\.pub:\K[0-9]+' /tmp/bore_mc.log 2>/dev/null | head -1)
-            if [ -n "$WS_PORT" ] && [ -n "$MC_PORT" ]; then break; fi
+            if [ -n "$MC_PORT" ]; then break; fi
             sleep 1
           done
 
-          if [ -z "$WS_PORT" ] || [ -z "$MC_PORT" ]; then
-            echo "::error::Bore tunnel(s) failed to start."
-            echo "=== WS ===" && cat /tmp/bore_ws.log
-            echo "=== MC ===" && cat /tmp/bore_mc.log
+          if [ -z "$MC_PORT" ]; then
+            echo "::error::Bore MC tunnel failed."
+            cat /tmp/bore_mc.log
             exit 1
           fi
+          echo "MC → bore.pub:${MC_PORT}"
 
-          WS_URL="wss://bore.pub:${WS_PORT}"
-          echo "WS  → $WS_URL"
-          echo "MC  → bore.pub:${MC_PORT}"
-
-          # ── Resolve bore.pub real IP for Cloudflare A record ──────────
+          # ── Resolve bore.pub real IP ──────────────────────────────────
           BORE_IP=$(dig +short bore.pub A | grep -E '^\d+\.\d+\.\d+\.\d+$' | head -1)
           if [ -z "$BORE_IP" ]; then
-            BORE_IP=$(curl -s https://dns.google/resolve?name=bore.pub&type=A | grep -oP '"data":"\K[\d.]+' | head -1)
+            BORE_IP=$(curl -s "https://dns.google/resolve?name=bore.pub&type=A" \
+              | grep -oP '"data":"\K[\d.]+' | head -1)
           fi
-          echo "bore.pub resolves to: $BORE_IP"
+          echo "bore.pub IP → $BORE_IP"
 
-          if [ -z "$BORE_IP" ]; then
-            echo "::error::Cannot resolve bore.pub IP."
-            exit 1
-          fi
-
-          SERVERNAME="${{ github.event.inputs.servername }}"
           FULL_HOST="${SERVERNAME}.astrocore.qzz.io"
           CF_ZONE_ID="${{ secrets.CF_ZONE_ID }}"
           CF_API_TOKEN="${{ secrets.CF_API_TOKEN }}"
@@ -102,27 +123,27 @@ jobs:
             -H "Content-Type: application/json" \
             | grep -oP '"id":"\K[^"]+' | head -1)
 
-          CF_PAYLOAD="{\"type\":\"A\",\"name\":\"${FULL_HOST}\",\"content\":\"${BORE_IP}\",\"ttl\":60,\"proxied\":false}"
+          cat > /tmp/cf_a.json << JSONEOF
+{"type":"A","name":"${FULL_HOST}","content":"${BORE_IP}","ttl":60,"proxied":false}
+JSONEOF
 
           if [ -n "$EXISTING_ID" ]; then
-            echo "Updating A record $EXISTING_ID → $BORE_IP"
+            echo "Updating A record → $BORE_IP"
             curl -s -X PUT \
               "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${EXISTING_ID}" \
               -H "Authorization: Bearer ${CF_API_TOKEN}" \
               -H "Content-Type: application/json" \
-              -d "$CF_PAYLOAD"
+              --data @/tmp/cf_a.json
           else
             echo "Creating A record ${FULL_HOST} → $BORE_IP"
             curl -s -X POST \
               "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records" \
               -H "Authorization: Bearer ${CF_API_TOKEN}" \
               -H "Content-Type: application/json" \
-              -d "$CF_PAYLOAD"
+              --data @/tmp/cf_a.json
           fi
 
-          # ── Upsert SRV record for correct MC port ─────────────────────
-          # Minecraft client reads SRV to find bore.pub:MC_PORT automatically.
-          # Without this, clients would try port 25565 which won't work.
+          # ── Upsert SRV record (so MC client finds the right bore port) ─
           OLD_SRV_ID=$(curl -s \
             "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records?type=SRV&name=_minecraft._tcp.${FULL_HOST}" \
             -H "Authorization: Bearer ${CF_API_TOKEN}" \
@@ -134,15 +155,19 @@ jobs:
             -H "Authorization: Bearer ${CF_API_TOKEN}" \
             -H "Content-Type: application/json"
 
+          cat > /tmp/cf_srv.json << JSONEOF
+{"type":"SRV","name":"_minecraft._tcp.${FULL_HOST}","data":{"service":"_minecraft","proto":"_tcp","name":"${FULL_HOST}","priority":0,"weight":5,"port":${MC_PORT},"target":"bore.pub"},"ttl":60}
+JSONEOF
+
           curl -s -X POST \
             "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records" \
             -H "Authorization: Bearer ${CF_API_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{\"type\":\"SRV\",\"data\":{\"service\":\"_minecraft\",\"proto\":\"_tcp\",\"name\":\"${FULL_HOST}\",\"priority\":0,\"weight\":5,\"port\":${MC_PORT},\"target\":\"bore.pub\"},\"ttl\":60}"
+            --data @/tmp/cf_srv.json
 
-          echo "DNS ready: ${FULL_HOST} → ${BORE_IP} (A) + bore.pub:${MC_PORT} (SRV)"
+          echo "DNS updated: ${FULL_HOST} → ${BORE_IP} (A) + bore.pub:${MC_PORT} (SRV)"
 
-          # ── Register in PHP backend ───────────────────────────────────
+          # ── Register both in PHP backend ──────────────────────────────
           curl -s -X POST \
             -d "instance_id=${{ github.event.inputs.instance_id }}&ws_url=${WS_URL}&mc_address=${FULL_HOST}&bore_mc_port=${MC_PORT}&status=online&username=${{ github.event.inputs.username }}&servername=${SERVERNAME}" \
             "http://abmchost.rf.gd/update_ip.php"
