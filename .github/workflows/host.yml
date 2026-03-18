@@ -16,11 +16,13 @@ on:
       version:
         required: false
         default: 'latest'
+      servername:
+        required: true
+        description: 'e.g. survival  →  survival.astrocore.qzz.io'
 
 jobs:
   run-server:
     runs-on: ubuntu-latest
-    timeout-minutes: 355 
     steps:
       - name: Setup Dynamic Java
         uses: actions/setup-java@v3
@@ -40,49 +42,138 @@ jobs:
       - name: Install Node Dependencies
         run: npm install ws
 
-      - name: Start Tunnel & Register IP
+      - name: Start Tunnels & Update Cloudflare DNS
         run: |
-          npm install -g localtunnel
-          lt --port 8080 > /tmp/tunnel.log 2>&1 &
-          LT_PID=$!
-          echo "LT_PID=$LT_PID" >> $GITHUB_ENV
 
-          for i in $(seq 1 30); do
-            TUNNEL_LINE=$(cat /tmp/tunnel.log 2>/dev/null | grep -o 'https://[a-zA-Z0-9.-]*\.loca\.lt' | head -1)
-            if [ -n "$TUNNEL_LINE" ]; then
-              break
-            fi
+          # ── Install bore ──────────────────────────────────────────────
+          curl -sSL https://github.com/ekzhang/bore/releases/download/v0.5.0/bore-v0.5.0-x86_64-unknown-linux-musl.tar.gz \
+            | tar -xz -C /usr/local/bin bore
+          chmod +x /usr/local/bin bore
+
+          # ── Tunnel 1: WebSocket port 8080 (console panel) ─────────────
+          bore local 8080 --to bore.pub > /tmp/bore_ws.log 2>&1 &
+
+          # ── Tunnel 2: Minecraft TCP port 25565 (players) ──────────────
+          bore local 25565 --to bore.pub > /tmp/bore_mc.log 2>&1 &
+
+          # ── Wait up to 45s for BOTH tunnels ───────────────────────────
+          for i in $(seq 1 45); do
+            WS_PORT=$(grep -oP 'listening at bore\.pub:\K[0-9]+' /tmp/bore_ws.log 2>/dev/null | head -1)
+            MC_PORT=$(grep -oP 'listening at bore\.pub:\K[0-9]+' /tmp/bore_mc.log 2>/dev/null | head -1)
+            if [ -n "$WS_PORT" ] && [ -n "$MC_PORT" ]; then break; fi
             sleep 1
           done
 
-          if [ -z "$TUNNEL_LINE" ]; then
-            echo "::error::Tunnel failed to start. Check localtunnel logs."
-            cat /tmp/tunnel.log
+          if [ -z "$WS_PORT" ] || [ -z "$MC_PORT" ]; then
+            echo "::error::Bore tunnel(s) failed to start."
+            echo "=== WS ===" && cat /tmp/bore_ws.log
+            echo "=== MC ===" && cat /tmp/bore_mc.log
             exit 1
           fi
 
-          WS_URL=$(echo "$TUNNEL_LINE" | sed 's|https://|wss://|')
-          echo "Tunnel ready: $WS_URL"
+          WS_URL="wss://bore.pub:${WS_PORT}"
+          echo "WS  tunnel → $WS_URL"
+          echo "MC  tunnel → bore.pub:${MC_PORT}"
 
-          # FIREWALL BYPASS: Push IP directly to Cloud Storage via Git
-          cd storage_repo
-          mkdir -p ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}
-          
-          echo "{\"ws\": \"$WS_URL\", \"status\": \"online\", \"updated\": $(date +%s)}" > ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/routing.json
-          
-          git config user.name "Absora Relay Engine"
-          git config user.email "relay@absora.com"
-          
-          # Commit FIRST, then Pull (with conflict override), then Push
-          git add .
-          git commit -m "Node Route Update: Online" || true
-          
-          for i in {1..5}; do
-            git pull origin main --rebase -X ours || true
-            git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main && break || sleep 3
-          done
+          # ── Resolve bore.pub to its actual IP ─────────────────────────
+          # We need the raw IP to put in the Cloudflare DNS A record
+          BORE_IP=$(dig +short bore.pub | grep -oP '^\d+\.\d+\.\d+\.\d+' | head -1)
+          echo "bore.pub IP → $BORE_IP"
 
-      - name: Ignite Minecraft Engine
+          if [ -z "$BORE_IP" ]; then
+            echo "::error::Could not resolve bore.pub to an IP."
+            exit 1
+          fi
+
+          SERVERNAME="${{ github.event.inputs.servername }}"
+          CF_ZONE_ID="${{ secrets.CF_ZONE_ID }}"
+          CF_API_TOKEN="${{ secrets.CF_API_TOKEN }}"
+          DOMAIN="astrocore.qzz.io"
+          FULL_HOST="${SERVERNAME}.${DOMAIN}"
+
+          # ── Check if a DNS record already exists for this subdomain ───
+          EXISTING=$(curl -s -X GET \
+            "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records?type=A&name=${FULL_HOST}" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json")
+
+          RECORD_ID=$(echo "$EXISTING" | grep -oP '"id":"\K[^"]+' | head -1)
+
+          if [ -n "$RECORD_ID" ]; then
+            # ── UPDATE existing A record to new bore.pub IP ─────────────
+            echo "Updating existing DNS A record $RECORD_ID → $BORE_IP"
+            curl -s -X PUT \
+              "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${RECORD_ID}" \
+              -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"type\": \"A\",
+                \"name\": \"${FULL_HOST}\",
+                \"content\": \"${BORE_IP}\",
+                \"ttl\": 60,
+                \"proxied\": false
+              }"
+          else
+            # ── CREATE new A record ──────────────────────────────────────
+            echo "Creating new DNS A record ${FULL_HOST} → $BORE_IP"
+            curl -s -X POST \
+              "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records" \
+              -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"type\": \"A\",
+                \"name\": \"${FULL_HOST}\",
+                \"content\": \"${BORE_IP}\",
+                \"ttl\": 60,
+                \"proxied\": false
+              }"
+          fi
+
+          # ── SRV record so players connect on the right MC port ─────────
+          # Without SRV, Minecraft defaults to port 25565.
+          # bore.pub:MC_PORT is non-25565, so we need an SRV record:
+          # _minecraft._tcp.SERVERNAME.astrocore.qzz.io → bore.pub:MC_PORT
+          # First remove old SRV if exists
+          OLD_SRV=$(curl -s -X GET \
+            "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records?type=SRV&name=_minecraft._tcp.${FULL_HOST}" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json")
+          OLD_SRV_ID=$(echo "$OLD_SRV" | grep -oP '"id":"\K[^"]+' | head -1)
+          if [ -n "$OLD_SRV_ID" ]; then
+            curl -s -X DELETE \
+              "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${OLD_SRV_ID}" \
+              -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              -H "Content-Type: application/json"
+          fi
+
+          # Create fresh SRV record pointing to bore.pub:MC_PORT
+          curl -s -X POST \
+            "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"type\": \"SRV\",
+              \"data\": {
+                \"service\": \"_minecraft\",
+                \"proto\": \"_tcp\",
+                \"name\": \"${FULL_HOST}\",
+                \"priority\": 0,
+                \"weight\": 5,
+                \"port\": ${MC_PORT},
+                \"target\": \"bore.pub\"
+              },
+              \"ttl\": 60
+            }"
+
+          echo "DNS updated: ${FULL_HOST} → ${BORE_IP} (A) + bore.pub:${MC_PORT} (SRV)"
+
+          # ── Register WS URL + MC address in PHP backend ───────────────
+          MC_ADDRESS="${FULL_HOST}"
+          curl -s -X POST \
+            -d "instance_id=${{ github.event.inputs.instance_id }}&ws_url=${WS_URL}&mc_address=${MC_ADDRESS}&bore_mc_port=${MC_PORT}&status=online&username=${{ github.event.inputs.username }}&servername=${{ github.event.inputs.servername }}" \
+            "http://abmchost.rf.gd/update_ip.php"
+
+      - name: Ignite Minecraft Server
         run: |
           cd server-env
           node ../server.js \
@@ -91,35 +182,29 @@ jobs:
             "${{ github.event.inputs.software }}" \
             "${{ github.event.inputs.version }}"
 
+      - name: Mark Instance Offline
+        if: always()
+        run: |
+          curl -s -X POST \
+            -d "instance_id=${{ github.event.inputs.instance_id }}&ws_url=&mc_address=&status=offline&username=${{ github.event.inputs.username }}" \
+            "http://abmchost.rf.gd/update_ip.php" || true
+
       - name: Save & Relay Protocol
         if: always()
         run: |
-          echo "Preparing instance directory..."
           TARGET_DIR="storage_repo/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}"
           mkdir -p "$TARGET_DIR"
-
-          # Write offline routing status before sync
-          echo "{\"ws\": \"\", \"status\": \"offline\", \"updated\": $(date +%s)}" > server-env/routing.json
-
-          echo "Syncing server files to cloud..."
           rsync -av --exclude='storage_repo' --exclude='*.log' server-env/ "$TARGET_DIR/"
-          cp server-env/absora.log "$TARGET_DIR/" 2>/dev/null || true
 
-          echo "Pushing state to cloud..."
           cd storage_repo
           git config user.name "Absora Relay Engine"
           git config user.email "relay@absora.com"
-          
-          # Commit FIRST, then Pull (with conflict override), then Push
+          git pull origin main --rebase || true
           git add .
-          git commit -m "Relay save: ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}" || true
-          
-          for i in {1..5}; do
-            git pull origin main --rebase -X ours || true
-            git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main && break || sleep 3
-          done
+          git diff --staged --quiet || git commit -m "Relay save: ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}"
+          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main
 
-      - name: Trigger Next Relay (If Flag Set)
+      - name: Trigger Next Relay (if relay flag set)
         if: always()
         run: |
           if [ -f "server-env/relay.flag" ]; then
@@ -127,7 +212,7 @@ jobs:
             curl -s -X POST \
               -H "Accept: application/vnd.github.v3+json" \
               -H "Authorization: token ${{ secrets.ABSORA_PAT }}" \
-              https://api.github.com/repos/AADI-playz23/mc-launch/actions/workflows/host.yml/dispatches \
+              https://api.github.com/repos/AADI-playz23/mc-launch/actions/workflows/run.yml/dispatches \
               -d '{
                 "ref": "main",
                 "inputs": {
@@ -136,7 +221,8 @@ jobs:
                   "ram":         "${{ github.event.inputs.ram }}",
                   "java":        "${{ github.event.inputs.java }}",
                   "software":    "${{ github.event.inputs.software }}",
-                  "version":     "${{ github.event.inputs.version }}"
+                  "version":     "${{ github.event.inputs.version }}",
+                  "servername":  "${{ github.event.inputs.servername }}"
                 }
               }'
           else
