@@ -43,7 +43,7 @@ jobs:
           cp -r storage_repo/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/* server-env/ 2>/dev/null || echo "New instance."
 
       - name: Install Dependencies
-        run: npm install ws
+        run: pip install websockets psutil --break-system-packages
 
       - name: Install Bore
         run: |
@@ -144,7 +144,7 @@ jobs:
       - name: Ignite Server
         run: |
           cd server-env
-          node ../server.js \
+          python3 ../server.py \
             "${{ github.event.inputs.username }}" \
             "${{ github.event.inputs.ram }}" \
             "${{ github.event.inputs.software }}" \
@@ -195,7 +195,7 @@ jobs:
       - name: Trigger Next Relay
         if: always()
         run: |
-          # relay.flag is written by server.js when max runtime is hit
+          # relay.flag is written by server.py when max runtime is hit
           if [ -f "server-env/relay.flag" ]; then
             echo "Relay flag detected — dispatching next runner..."
             curl -s -X POST \
