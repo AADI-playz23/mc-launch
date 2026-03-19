@@ -46,9 +46,13 @@ jobs:
 
       - name: Install Bore
         run: |
-          curl -sL https://github.com/ekzhang/bore/releases/latest/download/bore-v0.5.0-x86_64-unknown-linux-musl.tar.gz | tar xz
+          # Auto-detect latest bore version and download
+          BORE_VERSION=$(curl -sL https://api.github.com/repos/ekzhang/bore/releases/latest | grep -oP '"tag_name":\s*"\Kv[^"]+')
+          echo "Installing bore $BORE_VERSION..."
+          curl -sL "https://github.com/ekzhang/bore/releases/download/${BORE_VERSION}/bore-${BORE_VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar xz
           chmod +x bore
           sudo mv bore /usr/local/bin/bore
+          bore --version
 
       - name: Start Bore Tunnels & Update Cloudflare DNS
         run: |
