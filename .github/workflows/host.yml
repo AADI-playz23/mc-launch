@@ -38,7 +38,7 @@ jobs:
       # Pull server files from: AADI/instance_1/* in mc-disk repo
       - name: Pull Cloud Storage
         run: |
-          git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git storage_repo
+          git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git storage_repo
           mkdir -p server-env
           cp -r storage_repo/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/* server-env/ 2>/dev/null || echo "New instance."
 
@@ -188,7 +188,7 @@ jobs:
 
           for attempt in 1 2 3; do
             git pull --rebase origin main && \
-            git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git HEAD:main && break
+            git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main && break
             echo "Push attempt ${attempt} failed, retrying..."
             sleep 5
           done
