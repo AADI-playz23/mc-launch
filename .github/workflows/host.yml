@@ -127,18 +127,20 @@ jobs:
           echo "DNS updated: ${SUBDOMAIN} → bore.pub:${MC_PORT}"
 
           # ── Write session file to mc-launch/session/USERNAME-INSTANCEID.json ─
-          # e.g. session/AADI-1.json
-          # Frontend reads this directly from raw.githubusercontent.com
-          SESSION_FILE="session/${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}.json"
-          mkdir -p session
+          # mc-launch is public so frontend can read it via raw.githubusercontent.com
+          git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git session_repo
+          SESSION_FILE="session_repo/session/${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}.json"
+          mkdir -p session_repo/session
           echo "{\"ws\":\"${WS_URL}\",\"status\":\"online\",\"updated\":$(date +%s)}" > "${SESSION_FILE}"
 
+          cd session_repo
           git config user.name "Absora Engine"
           git config user.email "engine@absora.com"
-          git add "${SESSION_FILE}"
+          git add "session/${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}.json"
           git commit -m "Session online: ${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}" || true
-          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git HEAD:main
-          echo "Session file written: ${SESSION_FILE}"
+          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git HEAD:main
+          cd ..
+          echo "Session file written."
 
       - name: Ignite Server
         run: |
@@ -153,14 +155,20 @@ jobs:
         if: always()
         run: |
           # Mark session offline in mc-launch/session/USERNAME-INSTANCEID.json
-          SESSION_FILE="session/${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}.json"
+          if [ -d "session_repo" ]; then
+            cd session_repo
+          else
+            git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git session_repo
+            cd session_repo
+          fi
           mkdir -p session
-          echo "{\"ws\":\"\",\"status\":\"offline\",\"updated\":$(date +%s)}" > "${SESSION_FILE}"
+          echo "{\"ws\":\"\",\"status\":\"offline\",\"updated\":$(date +%s)}"             > "session/${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}.json"
           git config user.name "Absora Engine"
           git config user.email "engine@absora.com"
-          git add "${SESSION_FILE}"
+          git add "session/${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}.json"
           git commit -m "Session offline: ${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}" || true
-          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git HEAD:main || true
+          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git HEAD:main || true
+          cd ..
 
           # Sync server files → AADI/instance_1/*
           TARGET_DIR="storage_repo/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}"
