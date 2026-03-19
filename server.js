@@ -212,6 +212,9 @@ function startMinecraft() {
         ];
     }
 
+    // Auto-accept EULA so server doesn't halt on first boot
+    fs.writeFileSync('eula.txt', 'eula=true\n');
+
     mcServer = spawn(launchCmd, launchArgs);
     serverState = 'running';
     broadcastState('running');
