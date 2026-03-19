@@ -7,7 +7,16 @@ const username = process.argv[2] || 'Pilot';
 const assignedRam = process.argv[3] || '4G';
 const softwareFile = process.argv[4] || 'paper.json';
 const versionKey = process.argv[5]; 
-const wss = new WebSocket.Server({ port: 8080 });
+// Use an HTTP server so cloudflared can properly proxy WebSocket upgrades
+// cloudflared sends HTTP traffic to port 8080; the ws library handles the upgrade
+const http = require('http');
+const httpServer = http.createServer((req, res) => {
+    // Respond to cloudflared health checks
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Absora Engine OK');
+});
+const wss = new WebSocket.Server({ server: httpServer });
+httpServer.listen(8080);
 
 let planTotalGB = parseInt(assignedRam) || 4; 
 let planCores = planTotalGB >= 16 ? 8 : (planTotalGB >= 8 ? 4 : (planTotalGB >= 6 ? 2 : 1));
