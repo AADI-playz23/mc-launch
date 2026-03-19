@@ -137,7 +137,7 @@ jobs:
           git config user.email "engine@absora.com"
           git add "${SESSION_FILE}"
           git commit -m "Session online: ${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}" || true
-          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git HEAD:main
+          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git HEAD:main
           echo "Session file written: ${SESSION_FILE}"
 
       - name: Ignite Server
@@ -160,7 +160,7 @@ jobs:
           git config user.email "engine@absora.com"
           git add "${SESSION_FILE}"
           git commit -m "Session offline: ${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}" || true
-          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git HEAD:main || true
+          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk.git HEAD:main || true
 
           # Sync server files → AADI/instance_1/*
           TARGET_DIR="storage_repo/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}"
