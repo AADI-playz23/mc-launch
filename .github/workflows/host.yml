@@ -67,8 +67,7 @@ jobs:
           bore local 25565 --to bore.pub > /tmp/bore_mc.txt 2>&1 &
 
           # ── Cloudflared: WebSocket console (8080 → stable *.trycloudflare.com)
-          cloudflared tunnel --url http://localhost:8080 \
-            --no-autoupdate > /tmp/cf_ws.txt 2>&1 &
+          cloudflared tunnel --url http://localhost:8080             --no-autoupdate             --no-chunked-encoding > /tmp/cf_ws.txt 2>&1 &
 
           echo "Waiting for tunnels..."
           for i in $(seq 1 45); do
@@ -87,7 +86,7 @@ jobs:
             echo "=== cloudflared output ===" && cat /tmp/cf_ws.txt && exit 1
           fi
 
-          WS_URL=$(echo "$CF_URL" | sed 's|https://|wss://|')
+          WS_URL="${CF_URL}"  # Keep https:// — Cloudflare edge handles WSS termination
           echo "MC  : bore.pub:${MC_PORT}"
           echo "WS  : ${WS_URL}"
 
