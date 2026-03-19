@@ -46,47 +46,50 @@ jobs:
 
       - name: Install Bore
         run: |
-          # Auto-detect latest bore version and download
-          BORE_VERSION=$(curl -sL https://api.github.com/repos/ekzhang/bore/releases/latest | grep -oP '"tag_name":\s*"\Kv[^"]+')
-          echo "Installing bore $BORE_VERSION..."
-          curl -sL "https://github.com/ekzhang/bore/releases/download/${BORE_VERSION}/bore-${BORE_VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar xz
-          chmod +x bore
-          sudo mv bore /usr/local/bin/bore
+          BORE_VERSION=$(curl -sL https://api.github.com/repos/ekzhang/bore/releases/latest | grep -oP '"tag_name":.*?"v\K[^"]+')
+          echo "Installing bore v${BORE_VERSION}..."
+          curl -sL "https://github.com/ekzhang/bore/releases/download/v${BORE_VERSION}/bore-v${BORE_VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar xz
+          chmod +x bore && sudo mv bore /usr/local/bin/bore
           bore --version
 
-      - name: Start Bore Tunnels & Update Cloudflare DNS
+      - name: Install Cloudflared
         run: |
-          # Two bore tunnels:
-          #   MC_PORT  → Minecraft game port (25565 → random public port on bore.pub)
-          #   WS_PORT  → WebSocket console  (8080  → random public port on bore.pub)
+          curl -sL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+          chmod +x cloudflared && sudo mv cloudflared /usr/local/bin/cloudflared
+          cloudflared --version
+
+      - name: Start Tunnels & Update Cloudflare DNS
+        run: |
+          # Bore  → MC game port  (25565 → bore.pub:RANDOM_PORT)
+          # Cloudflared → WS console (8080 → stable *.trycloudflare.com URL)
 
           bore local 25565 --to bore.pub > /tmp/bore_mc.txt 2>&1 &
-          bore local 8080  --to bore.pub > /tmp/bore_ws.txt 2>&1 &
+          cloudflared tunnel --url http://localhost:8080 > /tmp/cf_ws.txt 2>&1 &
 
-          echo "Waiting for bore tunnels..."
-          for i in $(seq 1 30); do
+          echo "Waiting for tunnels to open..."
+          for i in $(seq 1 40); do
             sleep 1
             MC_PORT=$(grep -oP 'listening at bore\.pub:\K[0-9]+' /tmp/bore_mc.txt | head -1)
-            WS_PORT=$(grep -oP 'listening at bore\.pub:\K[0-9]+' /tmp/bore_ws.txt | head -1)
-            if [ -n "$MC_PORT" ] && [ -n "$WS_PORT" ]; then
-              break
-            fi
+            CF_URL=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cf_ws.txt | head -1)
+            [ -n "$MC_PORT" ] && [ -n "$CF_URL" ] && break
           done
 
-          if [ -z "$MC_PORT" ] || [ -z "$WS_PORT" ]; then
-            echo "=== bore MC output ==="
-            cat /tmp/bore_mc.txt
-            echo "=== bore WS output ==="
-            cat /tmp/bore_ws.txt
-            exit 1
+          if [ -z "$MC_PORT" ]; then
+            echo "=== bore output ===" && cat /tmp/bore_mc.txt && exit 1
+          fi
+          if [ -z "$CF_URL" ]; then
+            echo "=== cloudflared output ===" && cat /tmp/cf_ws.txt && exit 1
           fi
 
-          echo "MC  tunnel: bore.pub:$MC_PORT"
-          echo "WS  tunnel: bore.pub:$WS_PORT"
+          # Convert https://xxx.trycloudflare.com → wss://xxx.trycloudflare.com
+          WS_URL=$(echo "$CF_URL" | sed 's|https://|wss://|')
 
-          # Resolve bore.pub to actual IP for the A record
+          echo "MC  tunnel : bore.pub:$MC_PORT"
+          echo "WS  tunnel : $WS_URL"
+
+          # Resolve bore.pub IP for Cloudflare A record
           BORE_IP=$(dig +short bore.pub | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-          echo "bore.pub resolves to: $BORE_IP"
+          echo "bore.pub IP: $BORE_IP"
 
           SERVERNAME="${{ github.event.inputs.servername }}"
           CF_TOKEN="${{ secrets.CF_API_TOKEN }}"
@@ -101,14 +104,13 @@ jobs:
           A_BODY="{\"type\":\"A\",\"name\":\"${SUBDOMAIN}\",\"content\":\"${BORE_IP}\",\"ttl\":60,\"proxied\":false}"
 
           if [ -n "$A_ID" ]; then
-            echo "Updating A record..."
             curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records/${A_ID}" \
               -H "Authorization: Bearer ${CF_TOKEN}" -H "Content-Type: application/json" -d "$A_BODY"
           else
-            echo "Creating A record..."
             curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records" \
               -H "Authorization: Bearer ${CF_TOKEN}" -H "Content-Type: application/json" -d "$A_BODY"
           fi
+          echo "A record updated: ${SUBDOMAIN} → ${BORE_IP}"
 
           # ── SRV record: _minecraft._tcp.servername.astrocore.qzz.io ─────────
           SRV_NAME="_minecraft._tcp.${SUBDOMAIN}"
@@ -116,44 +118,40 @@ jobs:
             "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records?type=SRV&name=${SRV_NAME}" \
             -H "Authorization: Bearer ${CF_TOKEN}" -H "Content-Type: application/json")
           SRV_ID=$(echo "$SRV_EXISTING" | grep -oP '"id":"\K[^"]+' | head -1)
-          SRV_BODY="{
-            \"type\": \"SRV\",
-            \"name\": \"${SRV_NAME}\",
-            \"ttl\": 60,
-            \"data\": {
-              \"service\":  \"_minecraft\",
-              \"proto\":    \"_tcp\",
-              \"name\":     \"${SUBDOMAIN}\",
-              \"priority\": 0,
-              \"weight\":   5,
-              \"port\":     ${MC_PORT},
-              \"target\":   \"bore.pub\"
-            }
-          }"
+          SRV_BODY="{\"type\":\"SRV\",\"name\":\"${SRV_NAME}\",\"ttl\":60,\"data\":{\"service\":\"_minecraft\",\"proto\":\"_tcp\",\"name\":\"${SUBDOMAIN}\",\"priority\":0,\"weight\":5,\"port\":${MC_PORT},\"target\":\"bore.pub\"}}"
 
           if [ -n "$SRV_ID" ]; then
-            echo "Updating SRV record (port $MC_PORT)..."
             curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records/${SRV_ID}" \
               -H "Authorization: Bearer ${CF_TOKEN}" -H "Content-Type: application/json" -d "$SRV_BODY"
           else
-            echo "Creating SRV record (port $MC_PORT)..."
             curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records" \
               -H "Authorization: Bearer ${CF_TOKEN}" -H "Content-Type: application/json" -d "$SRV_BODY"
           fi
+          echo "SRV record updated: port ${MC_PORT}"
+          echo "Players connect to: ${SUBDOMAIN}"
 
-          echo ""
-          echo "Players connect to: ${SUBDOMAIN}  (resolves → bore.pub:${MC_PORT})"
-
-          # ── Register WS URL with PHP backend for console ─────────────────────
-          WS_URL="wss://bore.pub:${WS_PORT}"
+          # ── Register WS URL with PHP backend ─────────────────────────────────
+          # Non-fatal: server boots even if PHP backend is temporarily unreachable
           for attempt in 1 2 3 4 5; do
-            CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 --connect-timeout 5 -X POST \
               -d "instance_id=${{ github.event.inputs.instance_id }}&ws_url=${WS_URL}&status=online" \
-              "http://abmchost.rf.gd/update_ip.php")
-            echo "Console IP push attempt $attempt: HTTP $CODE"
-            [ "$CODE" = "200" ] && break
+              "http://abmchost.rf.gd/update_ip.php" 2>/dev/null || echo "000")
+            echo "WS URL push attempt $attempt: HTTP $CODE"
+            [ "$CODE" = "200" ] && { echo "Console IP registered."; break; }
             sleep 3
           done
+          echo "WS URL: ${WS_URL} (console can connect via this address)"
+
+          # Fallback: write WS URL into storage repo so get_ip.php can read it
+          # even if the PHP backend (abmchost.rf.gd) is down
+          echo "{\"ws\":\"${WS_URL}\",\"status\":\"online\",\"updated\":$(date +%s)}" \
+            > storage_repo/ws_instance_${{ github.event.inputs.instance_id }}.json
+          cd storage_repo
+          git config user.name "Absora Engine" && git config user.email "engine@absora.com"
+          git add ws_instance_${{ github.event.inputs.instance_id }}.json
+          git commit -m "WS URL for instance ${{ github.event.inputs.instance_id }}" || true
+          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main || true
+          cd ..
 
       - name: Ignite Server
         run: |
@@ -198,16 +196,5 @@ jobs:
               -H "Accept: application/vnd.github.v3+json" \
               -H "Authorization: token ${{ secrets.ABSORA_PAT }}" \
               https://api.github.com/repos/AADI-playz23/mc-launch/actions/workflows/host.yml/dispatches \
-              -d "{
-                \"ref\": \"main\",
-                \"inputs\": {
-                  \"username\":    \"${{ github.event.inputs.username }}\",
-                  \"instance_id\": \"${{ github.event.inputs.instance_id }}\",
-                  \"ram\":         \"${{ github.event.inputs.ram }}\",
-                  \"java\":        \"${{ github.event.inputs.java }}\",
-                  \"software\":    \"${{ github.event.inputs.software }}\",
-                  \"version\":     \"${{ github.event.inputs.version }}\",
-                  \"servername\":  \"${{ github.event.inputs.servername }}\"
-                }
-              }"
+              -d "{\"ref\":\"main\",\"inputs\":{\"username\":\"${{ github.event.inputs.username }}\",\"instance_id\":\"${{ github.event.inputs.instance_id }}\",\"ram\":\"${{ github.event.inputs.ram }}\",\"java\":\"${{ github.event.inputs.java }}\",\"software\":\"${{ github.event.inputs.software }}\",\"version\":\"${{ github.event.inputs.version }}\",\"servername\":\"${{ github.event.inputs.servername }}\"}}"
           fi
