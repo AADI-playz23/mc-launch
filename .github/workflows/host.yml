@@ -16,6 +16,9 @@ on:
       version:
         required: false
         default: 'latest'
+      servername:
+        required: false
+        default: 'server'
 
 jobs:
   run-server:
@@ -37,51 +40,114 @@ jobs:
           git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git storage_repo
           mkdir -p server-env
           cp -r storage_repo/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/* server-env/ 2>/dev/null || echo "New instance, starting fresh."
-          
+
       - name: Install Dependencies
         run: npm install ws
 
-      # FIX: Use a more reliable tunnel method with proper URL extraction
-      # localtunnel's stdout format changed — we parse it robustly
-      - name: Start Tunnel & Register IP
+      - name: Install Bore
         run: |
-          npm install -g localtunnel
-          
-          # Start tunnel in background, capture output to file
-          lt --port 8080 > /tmp/tunnel_output.txt 2>&1 &
-          TUNNEL_PID=$!
-          echo $TUNNEL_PID > /tmp/tunnel.pid
-          
-          # Wait for tunnel to be ready (up to 30s)
+          curl -sL https://github.com/ekzhang/bore/releases/latest/download/bore-v0.5.0-x86_64-unknown-linux-musl.tar.gz | tar xz
+          chmod +x bore
+          sudo mv bore /usr/local/bin/bore
+
+      - name: Start Bore Tunnels & Update Cloudflare DNS
+        run: |
+          # Two bore tunnels:
+          #   MC_PORT  → Minecraft game port (25565 → random public port on bore.pub)
+          #   WS_PORT  → WebSocket console  (8080  → random public port on bore.pub)
+
+          bore local 25565 --to bore.pub > /tmp/bore_mc.txt 2>&1 &
+          bore local 8080  --to bore.pub > /tmp/bore_ws.txt 2>&1 &
+
+          echo "Waiting for bore tunnels..."
           for i in $(seq 1 30); do
             sleep 1
-            # FIX: Robust URL extraction - handle both old and new lt output formats
-            HTTPS_URL=$(grep -oE 'https://[a-zA-Z0-9._-]+\.loca\.lt' /tmp/tunnel_output.txt | head -1)
-            if [ -n "$HTTPS_URL" ]; then
+            MC_PORT=$(grep -oP 'listening at bore\.pub:\K[0-9]+' /tmp/bore_mc.txt | head -1)
+            WS_PORT=$(grep -oP 'listening at bore\.pub:\K[0-9]+' /tmp/bore_ws.txt | head -1)
+            if [ -n "$MC_PORT" ] && [ -n "$WS_PORT" ]; then
               break
             fi
           done
-          
-          if [ -z "$HTTPS_URL" ]; then
-            echo "ERROR: Could not get tunnel URL. Output was:"
-            cat /tmp/tunnel_output.txt
+
+          if [ -z "$MC_PORT" ] || [ -z "$WS_PORT" ]; then
+            echo "=== bore MC output ==="
+            cat /tmp/bore_mc.txt
+            echo "=== bore WS output ==="
+            cat /tmp/bore_ws.txt
             exit 1
           fi
-          
-          # Convert https:// to wss:// for WebSocket
-          WS_URL=$(echo "$HTTPS_URL" | sed 's|https://|wss://|')
-          echo "Tunnel ready: $WS_URL"
-          
-          # FIX: Retry the IP push up to 5 times to handle transient failures
+
+          echo "MC  tunnel: bore.pub:$MC_PORT"
+          echo "WS  tunnel: bore.pub:$WS_PORT"
+
+          # Resolve bore.pub to actual IP for the A record
+          BORE_IP=$(dig +short bore.pub | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          echo "bore.pub resolves to: $BORE_IP"
+
+          SERVERNAME="${{ github.event.inputs.servername }}"
+          CF_TOKEN="${{ secrets.CF_API_TOKEN }}"
+          CF_ZONE="${{ secrets.CF_ZONE_ID }}"
+          SUBDOMAIN="${SERVERNAME}.astrocore.qzz.io"
+
+          # ── A record: servername.astrocore.qzz.io → bore.pub IP ──────────────
+          A_EXISTING=$(curl -s \
+            "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records?type=A&name=${SUBDOMAIN}" \
+            -H "Authorization: Bearer ${CF_TOKEN}" -H "Content-Type: application/json")
+          A_ID=$(echo "$A_EXISTING" | grep -oP '"id":"\K[^"]+' | head -1)
+          A_BODY="{\"type\":\"A\",\"name\":\"${SUBDOMAIN}\",\"content\":\"${BORE_IP}\",\"ttl\":60,\"proxied\":false}"
+
+          if [ -n "$A_ID" ]; then
+            echo "Updating A record..."
+            curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records/${A_ID}" \
+              -H "Authorization: Bearer ${CF_TOKEN}" -H "Content-Type: application/json" -d "$A_BODY"
+          else
+            echo "Creating A record..."
+            curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records" \
+              -H "Authorization: Bearer ${CF_TOKEN}" -H "Content-Type: application/json" -d "$A_BODY"
+          fi
+
+          # ── SRV record: _minecraft._tcp.servername.astrocore.qzz.io ─────────
+          SRV_NAME="_minecraft._tcp.${SUBDOMAIN}"
+          SRV_EXISTING=$(curl -s \
+            "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records?type=SRV&name=${SRV_NAME}" \
+            -H "Authorization: Bearer ${CF_TOKEN}" -H "Content-Type: application/json")
+          SRV_ID=$(echo "$SRV_EXISTING" | grep -oP '"id":"\K[^"]+' | head -1)
+          SRV_BODY="{
+            \"type\": \"SRV\",
+            \"name\": \"${SRV_NAME}\",
+            \"ttl\": 60,
+            \"data\": {
+              \"service\":  \"_minecraft\",
+              \"proto\":    \"_tcp\",
+              \"name\":     \"${SUBDOMAIN}\",
+              \"priority\": 0,
+              \"weight\":   5,
+              \"port\":     ${MC_PORT},
+              \"target\":   \"bore.pub\"
+            }
+          }"
+
+          if [ -n "$SRV_ID" ]; then
+            echo "Updating SRV record (port $MC_PORT)..."
+            curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records/${SRV_ID}" \
+              -H "Authorization: Bearer ${CF_TOKEN}" -H "Content-Type: application/json" -d "$SRV_BODY"
+          else
+            echo "Creating SRV record (port $MC_PORT)..."
+            curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records" \
+              -H "Authorization: Bearer ${CF_TOKEN}" -H "Content-Type: application/json" -d "$SRV_BODY"
+          fi
+
+          echo ""
+          echo "Players connect to: ${SUBDOMAIN}  (resolves → bore.pub:${MC_PORT})"
+
+          # ── Register WS URL with PHP backend for console ─────────────────────
+          WS_URL="wss://bore.pub:${WS_PORT}"
           for attempt in 1 2 3 4 5; do
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
               -d "instance_id=${{ github.event.inputs.instance_id }}&ws_url=${WS_URL}&status=online" \
               "http://abmchost.rf.gd/update_ip.php")
-            echo "IP push attempt $attempt: HTTP $HTTP_CODE"
-            if [ "$HTTP_CODE" = "200" ]; then
-              echo "IP registered successfully."
-              break
-            fi
+            echo "Console IP push attempt $attempt: HTTP $CODE"
+            [ "$CODE" = "200" ] && break
             sleep 3
           done
 
@@ -94,36 +160,27 @@ jobs:
             "${{ github.event.inputs.software }}" \
             "${{ github.event.inputs.version }}"
 
-      # FIX: This step always runs, even if server crashes
       - name: Save & Relay Protocol (Bulletproof Sync)
         if: always()
         run: |
-          # FIX: Mark instance as offline before saving so frontend knows
           curl -s -X POST \
             -d "instance_id=${{ github.event.inputs.instance_id }}&ws_url=&status=offline" \
             "http://abmchost.rf.gd/update_ip.php" || true
-          
-          echo "Preparing Instance Directory..."
+
           TARGET_DIR="storage_repo/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}"
           mkdir -p "$TARGET_DIR"
-          
-          echo "Syncing Volumes..."
-          rsync -av \
-            --exclude='storage_repo' \
-            --exclude='*.pid' \
-            --exclude='relay.flag' \
+          rsync -av --exclude='storage_repo' --exclude='*.pid' --exclude='relay.flag' \
             server-env/ "$TARGET_DIR/"
-          
-          echo "Pushing State to Cloud..."
+
           cd storage_repo
           git config user.name "Absora Relay Engine"
           git config user.email "relay@absora.com"
           git add .
-          git commit -m "Relay Save: ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }} @ $(date -u '+%Y-%m-%d %H:%M UTC')" || echo "No state changes to save."
-          
-          # FIX: Retry push with rebase to avoid race conditions between concurrent saves
+          git commit -m "Relay Save: ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }} @ $(date -u '+%Y-%m-%d %H:%M UTC')" || echo "No changes."
+
           for attempt in 1 2 3; do
-            git pull --rebase origin main && git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main && break
+            git pull --rebase origin main && \
+            git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main && break
             echo "Push attempt $attempt failed, retrying..."
             sleep 5
           done
@@ -132,21 +189,21 @@ jobs:
         if: always()
         run: |
           if [ -f "server-env/relay.flag" ]; then
-            echo "Relay flag detected — triggering next runner..."
+            echo "Dispatching next runner..."
             curl -s -X POST \
               -H "Accept: application/vnd.github.v3+json" \
               -H "Authorization: token ${{ secrets.ABSORA_PAT }}" \
-              https://api.github.com/repos/AADI-playz23/mc-launch/actions/workflows/run.yml/dispatches \
-              -d '{
-                "ref":"main",
-                "inputs":{
-                  "username":"${{ github.event.inputs.username }}",
-                  "instance_id":"${{ github.event.inputs.instance_id }}",
-                  "ram":"${{ github.event.inputs.ram }}",
-                  "java":"${{ github.event.inputs.java }}",
-                  "software":"${{ github.event.inputs.software }}",
-                  "version":"${{ github.event.inputs.version }}"
+              https://api.github.com/repos/AADI-playz23/mc-launch/actions/workflows/host.yml/dispatches \
+              -d "{
+                \"ref\": \"main\",
+                \"inputs\": {
+                  \"username\":    \"${{ github.event.inputs.username }}\",
+                  \"instance_id\": \"${{ github.event.inputs.instance_id }}\",
+                  \"ram\":         \"${{ github.event.inputs.ram }}\",
+                  \"java\":        \"${{ github.event.inputs.java }}\",
+                  \"software\":    \"${{ github.event.inputs.software }}\",
+                  \"version\":     \"${{ github.event.inputs.version }}\",
+                  \"servername\":  \"${{ github.event.inputs.servername }}\"
                 }
-              }'
-            echo "Next relay dispatched."
+              }"
           fi
