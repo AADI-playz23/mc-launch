@@ -43,7 +43,11 @@ jobs:
           cp -r storage_repo/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/* server-env/ 2>/dev/null || echo "New instance."
 
       - name: Install Dependencies
-        run: npm install ws
+        run: |
+          # Install ws in workspace root so node ../server.js can find it
+          npm install ws
+          # Verify server.js exists (must be committed to mc-launch repo)
+          ls -la server.js || { echo "ERROR: server.js not found in repo root! Commit it to mc-launch."; exit 1; }
 
       - name: Install Bore
         run: |
@@ -139,8 +143,11 @@ jobs:
 
       - name: Ignite Server
         run: |
+          # Copy server.js and node_modules into server-env so paths are self-contained
+          cp server.js server-env/server.js
+          cp -r node_modules server-env/node_modules
           cd server-env
-          node ../server.js \
+          node server.js \
             "${{ github.event.inputs.username }}" \
             "${{ github.event.inputs.ram }}" \
             "${{ github.event.inputs.software }}" \
