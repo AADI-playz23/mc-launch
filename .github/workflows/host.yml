@@ -96,36 +96,57 @@ jobs:
           echo "MC tunnel : bore.pub:${MC_PORT}"
           echo "WS tunnel : ${CF_URL}"
 
-          # ── Resolve bore.pub IP ─────────────────────────────────────────────
-          BORE_IP=$(dig +short bore.pub A | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-          echo "bore.pub IP: ${BORE_IP}"
+          # ── CNAME: SUBDOMAIN → bore.pub ────────────────────────────────────
+          # Why CNAME not A record:
+          #   bore.pub IP changes every relay (new runner = new bore server).
+          #   An A record caches the OLD IP even after relay — players can't connect.
+          #   A CNAME delegates resolution to bore.pub itself, so every fresh
+          #   connection resolves bore.pub directly and always gets the live IP.
+          #   TTL=1 so the SRV port update also flushes within 1 second.
 
-          # ── A record: SUBDOMAIN → bore.pub IP ──────────────────────────────
+          # Delete any stale A record first (A and CNAME can't coexist)
           A_EXISTING=$(curl -s \
-            "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records?name=${SUBDOMAIN}" \
+            "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records?type=A&name=${SUBDOMAIN}" \
             -H "Authorization: Bearer ${CF_TOKEN}" \
             -H "Content-Type: application/json")
           A_ID=$(echo "$A_EXISTING" | grep -oP '"id":"\K[^"]+' | head -1)
-
-          A_BODY=$(printf '{"type":"A","name":"%s","content":"%s","ttl":60,"proxied":false}' \
-            "${SUBDOMAIN}" "${BORE_IP}")
-
           if [ -n "$A_ID" ]; then
-            curl -s -X PUT \
+            curl -s -X DELETE \
               "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records/${A_ID}" \
+              -H "Authorization: Bearer ${CF_TOKEN}" | grep -o '"success":[a-z]*'
+            echo "Deleted stale A record"
+          fi
+
+          # Upsert CNAME: SUBDOMAIN → bore.pub (TTL=1 minimum, near-instant flush)
+          CNAME_EXISTING=$(curl -s \
+            "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records?type=CNAME&name=${SUBDOMAIN}" \
+            -H "Authorization: Bearer ${CF_TOKEN}" \
+            -H "Content-Type: application/json")
+          CNAME_ID=$(echo "$CNAME_EXISTING" | grep -oP '"id":"\K[^"]+' | head -1)
+
+          CNAME_BODY=$(printf '{"type":"CNAME","name":"%s","content":"bore.pub","ttl":1,"proxied":false}' \
+            "${SUBDOMAIN}")
+
+          if [ -n "$CNAME_ID" ]; then
+            curl -s -X PUT \
+              "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records/${CNAME_ID}" \
               -H "Authorization: Bearer ${CF_TOKEN}" \
               -H "Content-Type: application/json" \
-              -d "$A_BODY"
+              -d "$CNAME_BODY" | grep -o '"success":[a-z]*'
           else
             curl -s -X POST \
               "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records" \
               -H "Authorization: Bearer ${CF_TOKEN}" \
               -H "Content-Type: application/json" \
-              -d "$A_BODY"
+              -d "$CNAME_BODY" | grep -o '"success":[a-z]*'
           fi
-          echo "A record updated: ${SUBDOMAIN} → ${BORE_IP}"
+          echo "CNAME updated: ${SUBDOMAIN} → bore.pub (TTL=1)"
 
-          # ── SRV record: _minecraft._tcp.SERVERNAME → bore.pub:MC_PORT ──────
+          # ── SRV record ──────────────────────────────────────────────────────
+          # Flow: player types SUBDOMAIN → SRV gives SUBDOMAIN:MC_PORT
+          #       → CNAME resolves SUBDOMAIN → bore.pub → fresh bore IP
+          #       → bore tunnel → MC server port 25565
+          # SRV target = SUBDOMAIN (within your zone) — follows CNAME automatically
           SRV_NAME="_minecraft._tcp.${SERVERNAME}"
           SRV_EXISTING=$(curl -s \
             "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records?type=SRV&name=${SRV_NAME}.astrocore.qzz.io" \
@@ -133,30 +154,30 @@ jobs:
             -H "Content-Type: application/json")
           SRV_ID=$(echo "$SRV_EXISTING" | grep -oP '"id":"\K[^"]+' | head -1)
 
-          SRV_BODY=$(printf '{"type":"SRV","name":"%s","ttl":60,"data":{"service":"_minecraft","proto":"_tcp","name":"%s","priority":0,"weight":5,"port":%s,"target":"bore.pub."}}' \
-            "${SRV_NAME}" "${SUBDOMAIN}" "${MC_PORT}")
+          SRV_BODY=$(printf '{"type":"SRV","name":"%s","ttl":1,"data":{"service":"_minecraft","proto":"_tcp","name":"%s","priority":0,"weight":5,"port":%s,"target":"%s."}}' \
+            "${SRV_NAME}" "${SUBDOMAIN}" "${MC_PORT}" "${SUBDOMAIN}")
 
           if [ -n "$SRV_ID" ]; then
             curl -s -X PUT \
               "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records/${SRV_ID}" \
               -H "Authorization: Bearer ${CF_TOKEN}" \
               -H "Content-Type: application/json" \
-              -d "$SRV_BODY"
+              -d "$SRV_BODY" | grep -o '"success":[a-z]*'
           else
             curl -s -X POST \
               "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records" \
               -H "Authorization: Bearer ${CF_TOKEN}" \
               -H "Content-Type: application/json" \
-              -d "$SRV_BODY"
+              -d "$SRV_BODY" | grep -o '"success":[a-z]*'
           fi
-          echo "SRV record updated: ${SRV_NAME}.astrocore.qzz.io → bore.pub:${MC_PORT}"
+          echo "SRV updated: ${SRV_NAME}.astrocore.qzz.io → ${SUBDOMAIN}:${MC_PORT}"
           echo "Players connect to: ${SUBDOMAIN}"
 
           # ── Session file for WS console ─────────────────────────────────────
           git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git session_repo
           SESSION_FILE="session_repo/session/${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}.json"
           mkdir -p session_repo/session
-          echo "{\"ws\":\"${CF_URL}\",\"status\":\"online\",\"updated\":$(date +%s)}" > "${SESSION_FILE}"
+          echo "{\"ws\":\"${CF_URL}\",\"status\":\"online\",\"mc_host\":\"bore.pub\",\"mc_port\":${MC_PORT},\"ip\":\"${{ github.event.inputs.servername }}.astrocore.qzz.io\",\"updated\":$(date +%s)}" > "${SESSION_FILE}"
           cd session_repo
           git config user.name "Absora Engine" && git config user.email "engine@absora.com"
           git add "session/${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}.json"
