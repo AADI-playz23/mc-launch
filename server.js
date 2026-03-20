@@ -17,21 +17,18 @@ const planTotalGb  = parseInt(assignedRam) || 4;
 const planCores    = planTotalGb >= 16 ? 8 : planTotalGb >= 8 ? 4 : planTotalGb >= 6 ? 2 : 1;
 
 // ── State ─────────────────────────────────────────────────────────────────────
-const clients    = new Set();
-const logHistory = [];
+const clients     = new Set();
+const logHistory  = [];
 const MAX_HISTORY = 200;
-let mcProcess    = null;
-let serverState  = 'stopped'; // stopped | starting | running | stopping | restarting
+let mcProcess     = null;
+let serverState   = 'stopped';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function broadcastAll(msg) {
     const dead = [];
     for (const ws of clients) {
-        if (ws.readyState === WebSocket.OPEN) {
-            ws.send(msg);
-        } else {
-            dead.push(ws);
-        }
+        if (ws.readyState === WebSocket.OPEN) ws.send(msg);
+        else dead.push(ws);
     }
     dead.forEach(ws => clients.delete(ws));
 }
@@ -47,6 +44,18 @@ function broadcastState(state) {
     broadcastAll(JSON.stringify({ type: 'state', state }));
 }
 
+// ── Stop: save world then shut down ──────────────────────────────────────────
+function doStop() {
+    if (serverState !== 'running') return;
+    broadcastState('stopping');
+    broadcastLog('\n[Absora Engine] Saving world before shutdown...\n');
+    mcProcess.stdin.write('save-all\n');
+    setTimeout(() => {
+        broadcastLog('[Absora Engine] World saved. Stopping server...\n');
+        mcProcess.stdin.write('stop\n');
+    }, 5000);
+}
+
 // ── Max runtime relay ─────────────────────────────────────────────────────────
 const MAX_RUNTIME_MINUTES = 345;
 let elapsedMinutes = 0;
@@ -59,11 +68,9 @@ const runtimeTimer = setInterval(() => {
         fs.writeFileSync('relay.flag', 'true');
         if (mcProcess && serverState === 'running') {
             broadcastState('stopping');
-            mcProcess.stdin.write('kick @a [Absora] Cloud node transfer in 60s!\n');
+            mcProcess.stdin.write('kick @a [Absora] Server relay in 10s. Reconnect shortly!\n');
             mcProcess.stdin.write('save-all\n');
-            setTimeout(() => {
-                mcProcess.stdin.write('stop\n');
-            }, 5000);
+            setTimeout(() => mcProcess.stdin.write('stop\n'), 5000);
         }
     }
 }, 60000);
@@ -72,17 +79,12 @@ const runtimeTimer = setInterval(() => {
 setInterval(() => {
     if (clients.size === 0) return;
     try {
-        const totalMem   = os.totalmem();
-        const freeMem    = os.freemem();
-        const usedBytes  = totalMem - freeMem;
-        const usedGb     = usedBytes / (1024 ** 3);
+        const usedBytes   = os.totalmem() - os.freemem();
+        const usedGb      = usedBytes / (1024 ** 3);
         const usedDisplay = Math.min(usedGb, planTotalGb * 0.98);
-        const ramPct     = Math.round((usedDisplay / planTotalGb) * 1000) / 10;
-
-        // CPU: average load over last 1 min, scaled to percentage
-        const load    = os.loadavg()[0];
-        const cpuCount = os.cpus().length;
-        const cpuPct  = Math.min(Math.round((load / cpuCount) * 1000) / 10, 100);
+        const ramPct      = Math.round((usedDisplay / planTotalGb) * 1000) / 10;
+        const load        = os.loadavg()[0];
+        const cpuPct      = Math.min(Math.round((load / os.cpus().length) * 1000) / 10, 100);
 
         broadcastAll(JSON.stringify({
             type:       'stats',
@@ -92,17 +94,12 @@ setInterval(() => {
             cpuPercent: String(cpuPct),
             state:      serverState
         }));
-    } catch (e) { /* ignore */ }
+    } catch (e) {}
 }, 3000);
 
 // ── WebSocket server ──────────────────────────────────────────────────────────
-const wss = new WebSocket.Server({
-    host: '0.0.0.0',
-    port: 8080,
-    maxPayload: 1024 * 1024,  // 1MB
-});
+const wss = new WebSocket.Server({ host: '0.0.0.0', port: 8080, maxPayload: 1024 * 1024 });
 
-// Keep-alive ping
 const pingInterval = setInterval(() => {
     for (const ws of clients) {
         if (ws.readyState === WebSocket.OPEN) ws.ping();
@@ -112,11 +109,7 @@ const pingInterval = setInterval(() => {
 
 wss.on('connection', (ws) => {
     clients.add(ws);
-
-    // Send log history + current state to new client
-    if (logHistory.length > 0) {
-        ws.send(JSON.stringify({ text: logHistory.join('') }));
-    }
+    if (logHistory.length > 0) ws.send(JSON.stringify({ text: logHistory.join('') }));
     ws.send(JSON.stringify({ type: 'state', state: serverState }));
 
     ws.on('message', (raw) => {
@@ -133,17 +126,10 @@ wss.on('connection', (ws) => {
                 broadcastState('restarting');
                 broadcastLog('\n[Absora Engine] Soft Reboot requested. Saving world...\n');
                 mcProcess.stdin.write('save-all\n');
-                setTimeout(() => mcProcess.stdin.write('stop\n'), 3000);
+                setTimeout(() => mcProcess.stdin.write('stop\n'), 5000);
 
             } else if (cmd === 'stop') {
-                if (serverState !== 'running') {
-                    ws.send(JSON.stringify({ text: '\n[Absora Engine] Server is not running.\n' }));
-                    return;
-                }
-                broadcastState('stopping');
-                broadcastLog('\n[Absora Engine] Manual shutdown. Saving world...\n');
-                mcProcess.stdin.write('save-all\n');
-                setTimeout(() => mcProcess.stdin.write('stop\n'), 3000);
+                doStop();
 
             } else {
                 if (mcProcess && serverState === 'running') {
@@ -152,7 +138,7 @@ wss.on('connection', (ws) => {
                     ws.send(JSON.stringify({ text: '\n[Absora Engine] Cannot send command — server not running.\n' }));
                 }
             }
-        } catch (e) { /* ignore bad messages */ }
+        } catch (e) {}
     });
 
     ws.on('close', () => clients.delete(ws));
@@ -167,27 +153,19 @@ wss.on('listening', () => {
 // ── Minecraft launcher ────────────────────────────────────────────────────────
 function startMinecraft() {
     broadcastState('starting');
-
-    // Auto-accept EULA
     fs.writeFileSync('eula.txt', 'eula=true\n');
 
-    let launchCmd;
-    let launchArgs = [];
-    let targetJar  = 'server.jar';
+    let launchCmd, launchArgs = [], targetJar = 'server.jar';
 
     if (fs.existsSync('run.sh')) {
-        // NeoForge / modded server with run.sh
         fs.writeFileSync('user_jvm_args.txt', `-Xms${assignedRam} -Xmx${assignedRam}`);
         launchCmd  = 'sh';
         launchArgs = ['run.sh', 'nogui'];
-
     } else {
-        // Find existing JAR
         const jars = fs.readdirSync('.').filter(f => f.endsWith('.jar') && f !== 'server.js');
         if (jars.length > 0) {
             targetJar = jars[0];
         } else if (versionKey) {
-            // Auto-download JAR
             broadcastLog(`\n[Absora Engine] No JAR found. Auto-downloading ${versionKey}...\n`);
             try {
                 const jsonPath = path.join('..', softwareFile);
@@ -209,25 +187,39 @@ function startMinecraft() {
             return;
         }
 
-        launchCmd  = 'java';
-        launchArgs = [
-            `-Xms${assignedRam}`, `-Xmx${assignedRam}`,
-            '-XX:+UseG1GC', '-XX:+ParallelRefProcEnabled',
-            '-XX:MaxGCPauseMillis=200', '-XX:+UnlockExperimentalVMOptions',
-            '-XX:G1HeapRegionSize=8M', '-XX:G1ReservePercent=20',
-            '-XX:G1HeapWastePercent=5',
-            '-jar', targetJar, 'nogui'
-        ];
+        // Detect proxy jars — they use port 25577 by default, no JVM flags needed
+        const isProxy = softwareFile === 'proxies.json' ||
+                        targetJar.toLowerCase().includes('velocity') ||
+                        targetJar.toLowerCase().includes('bungeecord') ||
+                        targetJar.toLowerCase().includes('bungee') ||
+                        targetJar.toLowerCase().includes('waterfall');
+
+        if (isProxy) {
+            broadcastLog('[Absora Engine] Proxy software detected (port 25577)
+');
+            launchCmd  = 'java';
+            launchArgs = [
+                `-Xms${assignedRam}`, `-Xmx${assignedRam}`,
+                '-jar', targetJar
+            ];
+        } else {
+            launchCmd  = 'java';
+            launchArgs = [
+                `-Xms${assignedRam}`, `-Xmx${assignedRam}`,
+                '-XX:+UseG1GC', '-XX:+ParallelRefProcEnabled',
+                '-XX:MaxGCPauseMillis=200', '-XX:+UnlockExperimentalVMOptions',
+                '-XX:G1HeapRegionSize=8M', '-XX:G1ReservePercent=20',
+                '-XX:G1HeapWastePercent=5',
+                '-jar', targetJar, 'nogui'
+            ];
+        }
     }
 
-    mcProcess = spawn(launchCmd, launchArgs, {
-        stdio: ['pipe', 'pipe', 'pipe']
-    });
-
+    mcProcess = spawn(launchCmd, launchArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
     broadcastState('running');
 
-    mcProcess.stdout.on('data', (data) => broadcastLog(data.toString()));
-    mcProcess.stderr.on('data', (data) => broadcastLog(data.toString()));
+    mcProcess.stdout.on('data', (d) => broadcastLog(d.toString()));
+    mcProcess.stderr.on('data', (d) => broadcastLog(d.toString()));
 
     mcProcess.on('exit', () => {
         const prev = serverState;
@@ -239,9 +231,12 @@ function startMinecraft() {
             setTimeout(startMinecraft, 8000);
         } else {
             broadcastState('stopped');
-            broadcastLog('\n[Absora Engine] Server stopped. Syncing to cloud...\n');
+            broadcastLog('\n[Absora Engine] Server stopped. Saving world to cloud...\n');
+            broadcastLog('[Absora Engine] World save in progress — do not close GitHub Actions.\n');
             clearInterval(pingInterval);
-            setTimeout(() => process.exit(0), 2500);
+            // Wait 3s so clients receive the stopped state, then exit.
+            // host.yml Save & Relay step runs after this and pushes world to GitHub.
+            setTimeout(() => process.exit(0), 3000);
         }
     });
 
