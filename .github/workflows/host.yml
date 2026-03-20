@@ -76,21 +76,38 @@ jobs:
           CF_ZONE="${{ secrets.CF_ZONE_ID }}"
           SUBDOMAIN="${SERVERNAME}.astrocore.qzz.io"
 
-          # ── Bore: MC port 25565 → bore.pub:RANDOM ──────────────────────────
-          bore local 25565 --to bore.pub > /tmp/bore_mc.txt 2>&1 &
+          # ── Bore: MC port 25565 → bore.pub:25565 (FIXED PORT) ─────────────
+          # Using --port 25565 so the address is always bore.pub:25565
+          # This means hexaforge.astrocore.qzz.io:25565 works permanently —
+          # no SRV needed, no random port, players connect on standard port.
+          # If port 25565 is taken on bore.pub, we try 25566 then 25567.
+          MC_PORT=""
+          for TRY_PORT in 25565 25566 25567 25568 25569; do
+            bore local 25565 --to bore.pub --port ${TRY_PORT} > /tmp/bore_mc.txt 2>&1 &
+            BORE_PID=$!
+            sleep 5
+            MC_PORT=$(grep -oP 'listening at bore\.pub:\K[0-9]+' /tmp/bore_mc.txt | head -1)
+            if [ -n "$MC_PORT" ]; then
+              echo "Bore secured port: bore.pub:${MC_PORT}"
+              break
+            else
+              echo "Port ${TRY_PORT} busy, trying next..."
+              kill $BORE_PID 2>/dev/null || true
+              sleep 1
+            fi
+          done
 
           # ── Cloudflared: WS console 8080 → trycloudflare.com ───────────────
           cloudflared tunnel --url http://localhost:8080 --no-autoupdate --no-chunked-encoding > /tmp/cf_ws.txt 2>&1 &
 
-          echo "Waiting for tunnels..."
+          echo "Waiting for Cloudflared..."
           for i in $(seq 1 60); do
             sleep 1
-            MC_PORT=$(grep -oP 'listening at bore\.pub:\K[0-9]+' /tmp/bore_mc.txt | head -1)
             CF_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cf_ws.txt | head -1)
-            [ -n "$MC_PORT" ] && [ -n "$CF_URL" ] && break
+            [ -n "$CF_URL" ] && break
           done
 
-          [ -z "$MC_PORT" ] && { echo "=== bore failed ===" && cat /tmp/bore_mc.txt && exit 1; }
+          [ -z "$MC_PORT" ] && { echo "=== bore failed — all ports busy ===" && cat /tmp/bore_mc.txt && exit 1; }
           [ -z "$CF_URL" ]  && { echo "=== cloudflared failed ===" && cat /tmp/cf_ws.txt && exit 1; }
 
           echo "MC tunnel : bore.pub:${MC_PORT}"
@@ -143,10 +160,11 @@ jobs:
           echo "CNAME updated: ${SUBDOMAIN} → bore.pub (TTL=1)"
 
           # ── SRV record ──────────────────────────────────────────────────────
-          # Flow: player types SUBDOMAIN → SRV gives SUBDOMAIN:MC_PORT
-          #       → CNAME resolves SUBDOMAIN → bore.pub → fresh bore IP
-          #       → bore tunnel → MC server port 25565
-          # SRV target = SUBDOMAIN (within your zone) — follows CNAME automatically
+          # SRV tells Minecraft clients which port to use on the domain.
+          # Since bore uses a fixed port (25565 or first free fallback),
+          # this SRV is stable across relays — only changes if bore port shifts.
+          # Flow: player types SUBDOMAIN → SRV → SUBDOMAIN:MC_PORT
+          #       → CNAME → bore.pub → bore tunnel → MC server
           SRV_NAME="_minecraft._tcp.${SERVERNAME}"
           SRV_EXISTING=$(curl -s \
             "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records?type=SRV&name=${SRV_NAME}.astrocore.qzz.io" \
@@ -171,13 +189,28 @@ jobs:
               -d "$SRV_BODY" | grep -o '"success":[a-z]*'
           fi
           echo "SRV updated: ${SRV_NAME}.astrocore.qzz.io → ${SUBDOMAIN}:${MC_PORT}"
-          echo "Players connect to: ${SUBDOMAIN}"
+          echo ""
+          echo "=============================================="
+          if [ "$MC_PORT" = "25565" ]; then
+            echo "  Players connect to: ${SUBDOMAIN}"
+            echo "  (standard port — no port number needed)"
+          else
+            echo "  Players connect to: ${SUBDOMAIN}:${MC_PORT}"
+          fi
+          echo "  Direct bore:        bore.pub:${MC_PORT}"
+          echo "=============================================="
 
           # ── Session file for WS console ─────────────────────────────────────
           git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git session_repo
           SESSION_FILE="session_repo/session/${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}.json"
           mkdir -p session_repo/session
-          echo "{\"ws\":\"${CF_URL}\",\"status\":\"online\",\"mc_host\":\"bore.pub\",\"mc_port\":${MC_PORT},\"ip\":\"${{ github.event.inputs.servername }}.astrocore.qzz.io\",\"updated\":$(date +%s)}" > "${SESSION_FILE}"
+          # If bore secured 25565, players just type the domain. Otherwise domain:PORT.
+          if [ "$MC_PORT" = "25565" ]; then
+            MC_CONNECT="${{ github.event.inputs.servername }}.astrocore.qzz.io"
+          else
+            MC_CONNECT="${{ github.event.inputs.servername }}.astrocore.qzz.io:${MC_PORT}"
+          fi
+          echo "{\"ws\":\"${CF_URL}\",\"status\":\"online\",\"mc_host\":\"bore.pub\",\"mc_port\":${MC_PORT},\"ip\":\"${MC_CONNECT}\",\"updated\":$(date +%s)}" > "${SESSION_FILE}"
           cd session_repo
           git config user.name "Absora Engine" && git config user.email "engine@absora.com"
           git add "session/${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}.json"
