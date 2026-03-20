@@ -1,5 +1,5 @@
 - name: Start Tunnels & Update DNS
-      run: 
+  run: |
           SERVERNAME="${{ github.event.inputs.servername }}"
           CF_TOKEN="${{ secrets.CF_API_TOKEN }}"
           CF_ZONE="${{ secrets.CF_ZONE_ID }}"
