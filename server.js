@@ -261,7 +261,7 @@ function startMinecraft() {
         } else {
             broadcastState('stopped');
             broadcastLog('\n[Absora Engine] Server stopped. Saving world to cloud...\n');
-            broadcastLog('[Absora Engine] World save in progress — do not close GitHub Actions.\n');
+            broadcastLog('[Absora Engine] World save in progress — do not close Absora Engine.\n');
             clearInterval(pingInterval);
             // Wait 3s so clients receive the stopped state, then exit.
             // host.yml Save & Relay step runs after this and pushes world to GitHub.
