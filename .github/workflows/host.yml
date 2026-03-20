@@ -191,25 +191,19 @@ jobs:
           echo "SRV updated: ${SRV_NAME}.astrocore.qzz.io → ${SUBDOMAIN}:${MC_PORT}"
           echo ""
           echo "=============================================="
-          if [ "$MC_PORT" = "25565" ]; then
-            echo "  Players connect to: ${SUBDOMAIN}"
-            echo "  (standard port — no port number needed)"
-          else
-            echo "  Players connect to: ${SUBDOMAIN}:${MC_PORT}"
-          fi
+          echo "  Players connect to: ${SUBDOMAIN}"
+          echo "  (SRV handles port — no port number needed)"
           echo "  Direct bore:        bore.pub:${MC_PORT}"
+          echo "  SRV port:           ${MC_PORT}"
           echo "=============================================="
 
           # ── Session file for WS console ─────────────────────────────────────
           git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git session_repo
           SESSION_FILE="session_repo/session/${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}.json"
           mkdir -p session_repo/session
-          # If bore secured 25565, players just type the domain. Otherwise domain:PORT.
-          if [ "$MC_PORT" = "25565" ]; then
-            MC_CONNECT="${{ github.event.inputs.servername }}.astrocore.qzz.io"
-          else
-            MC_CONNECT="${{ github.event.inputs.servername }}.astrocore.qzz.io:${MC_PORT}"
-          fi
+          # SRV record tells Minecraft which port to use — players ALWAYS type just the domain
+          # The SRV is updated every run with the actual bore port, so no port in the address.
+          MC_CONNECT="${{ github.event.inputs.servername }}.astrocore.qzz.io"
           echo "{\"ws\":\"${CF_URL}\",\"status\":\"online\",\"mc_host\":\"bore.pub\",\"mc_port\":${MC_PORT},\"ip\":\"${MC_CONNECT}\",\"updated\":$(date +%s)}" > "${SESSION_FILE}"
           cd session_repo
           git config user.name "Absora Engine" && git config user.email "engine@absora.com"
