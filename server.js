@@ -241,7 +241,7 @@ function startMinecraft() {
             broadcastState('stopped');
             broadcastLog('\n[Absora Engine] Server stopped. Syncing to cloud...\n');
             clearInterval(pingInterval);
-            setTimeout(() => process.exit(0), 1000);
+            setTimeout(() => process.exit(0), 2500);
         }
     });
 
