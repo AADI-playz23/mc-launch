@@ -76,17 +76,20 @@ jobs:
           CF_ZONE="${{ secrets.CF_ZONE_ID }}"
           SUBDOMAIN="${SERVERNAME}.astrocore.qzz.io"
 
-          # ── Detect software type to pick correct local port ────────────────
-          # Proxies (BungeeCord, Velocity) listen on 25577 by default.
-          # All other software (Paper, Spigot, Fabric, Forge, etc.) use 25565.
+          # Detect proxy vs standard software to pick correct local port
           SOFTWARE="${{ github.event.inputs.software }}"
-          if [ "$SOFTWARE" = "proxies.json" ]; then
-            LOCAL_MC_PORT=25577
-            echo "Proxy software detected — tunneling port 25577"
-          else
-            LOCAL_MC_PORT=25565
-            echo "Standard software detected — tunneling port 25565"
-          fi
+          echo "Software input received: [${SOFTWARE}]"
+          case "${SOFTWARE}" in
+            proxies.json)
+              LOCAL_MC_PORT=25577
+              echo "Proxy detected: tunneling port 25577"
+              ;;
+            *)
+              LOCAL_MC_PORT=25565
+              echo "Standard detected: tunneling port 25565"
+              ;;
+          esac
+          echo "LOCAL_MC_PORT=${LOCAL_MC_PORT}"
 
           # ── Bore: LOCAL_MC_PORT → bore.pub:FIXED_PORT ──────────────────────
           # Try fixed ports so players never need to type a port number.
@@ -232,7 +235,8 @@ jobs:
             "${{ github.event.inputs.username }}" \
             "${{ github.event.inputs.ram }}" \
             "${{ github.event.inputs.software }}" \
-            "${{ github.event.inputs.version }}"
+            "${{ github.event.inputs.version }}" \
+            "${{ github.event.inputs.servername }}"
 
       - name: Save & Relay Protocol
         if: always()
