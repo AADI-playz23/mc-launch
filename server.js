@@ -12,6 +12,8 @@ const username     = process.argv[2] || 'Pilot';
 const assignedRam  = process.argv[3] || '4G';
 const softwareFile = process.argv[4] || 'paper.json';
 const versionKey   = process.argv[5] || null;
+const servername   = process.argv[6] || 'server';
+const serverDomain = `${servername}.astrocore.qzz.io`;
 
 const planTotalGb  = parseInt(assignedRam) || 4;
 const planCores    = planTotalGb >= 16 ? 8 : planTotalGb >= 8 ? 4 : planTotalGb >= 6 ? 2 : 1;
@@ -62,15 +64,43 @@ let elapsedMinutes = 0;
 
 const runtimeTimer = setInterval(() => {
     elapsedMinutes++;
+
+    // ── Warn players 5 min before relay ─────────────────────────────────────
+    if (elapsedMinutes === MAX_RUNTIME_MINUTES - 5) {
+        if (mcProcess && serverState === 'running') {
+            mcProcess.stdin.write('title @a times 10 70 20\n');
+            mcProcess.stdin.write('title @a subtitle {"text":"Server restarts in 5 minutes","color":"yellow"}\n');
+            mcProcess.stdin.write('title @a title {"text":"⚠ Relay Soon","color":"gold"}\n');
+            mcProcess.stdin.write('say [Absora] Server will relay in 5 minutes. Reconnect to ${serverDomain} after restart!\n');
+        }
+    }
+
+    // ── Warn again 1 min before ──────────────────────────────────────────────
+    if (elapsedMinutes === MAX_RUNTIME_MINUTES - 1) {
+        if (mcProcess && serverState === 'running') {
+            mcProcess.stdin.write('title @a times 10 70 20\n');
+            mcProcess.stdin.write('title @a subtitle {"text":"Reconnect in ~2 minutes","color":"red"}\n');
+            mcProcess.stdin.write('title @a title {"text":"⚡ Relay in 60s","color":"red"}\n');
+            mcProcess.stdin.write('say [Absora] Relay in 60 seconds — reconnect to ${serverDomain} after restart!\n');
+        }
+    }
+
+    // ── Relay time ───────────────────────────────────────────────────────────
     if (elapsedMinutes >= MAX_RUNTIME_MINUTES) {
         clearInterval(runtimeTimer);
         broadcastLog('\n[Absora Engine] Max lifespan reached. Initiating automated relay...\n');
         fs.writeFileSync('relay.flag', 'true');
         if (mcProcess && serverState === 'running') {
             broadcastState('stopping');
-            mcProcess.stdin.write('kick @a [Absora] Server relay in 10s. Reconnect shortly!\n');
+            mcProcess.stdin.write('title @a times 10 100 20\n');
+            mcProcess.stdin.write('title @a subtitle {"text":"Reconnect in ~2 minutes","color":"gray"}\n');
+            mcProcess.stdin.write('title @a title {"text":"Server Restarting","color":"white"}\n');
+            mcProcess.stdin.write('say [Absora] Relay started. Saving world — reconnect to ${serverDomain} in 2 minutes!\n');
             mcProcess.stdin.write('save-all\n');
-            setTimeout(() => mcProcess.stdin.write('stop\n'), 5000);
+            setTimeout(() => {
+                mcProcess.stdin.write('kick @a §eServer relay in progress. Reconnect to §b${serverDomain} §ein ~2 min!\n');
+                setTimeout(() => mcProcess.stdin.write('stop\n'), 3000);
+            }, 5000);
         }
     }
 }, 60000);
@@ -195,8 +225,7 @@ function startMinecraft() {
                         targetJar.toLowerCase().includes('waterfall');
 
         if (isProxy) {
-            broadcastLog('[Absora Engine] Proxy software detected (port 25577)
-');
+            broadcastLog('[Absora Engine] Proxy software detected (port 25577)\n');
             launchCmd  = 'java';
             launchArgs = [
                 `-Xms${assignedRam}`, `-Xmx${assignedRam}`,
