@@ -76,19 +76,29 @@ jobs:
           CF_ZONE="${{ secrets.CF_ZONE_ID }}"
           SUBDOMAIN="${SERVERNAME}.astrocore.qzz.io"
 
-          # ── Bore: MC port 25565 → bore.pub:25565 (FIXED PORT) ─────────────
-          # Using --port 25565 so the address is always bore.pub:25565
-          # This means hexaforge.astrocore.qzz.io:25565 works permanently —
-          # no SRV needed, no random port, players connect on standard port.
-          # If port 25565 is taken on bore.pub, we try 25566 then 25567.
+          # ── Detect software type to pick correct local port ────────────────
+          # Proxies (BungeeCord, Velocity) listen on 25577 by default.
+          # All other software (Paper, Spigot, Fabric, Forge, etc.) use 25565.
+          SOFTWARE="${{ github.event.inputs.software }}"
+          if [ "$SOFTWARE" = "proxies.json" ]; then
+            LOCAL_MC_PORT=25577
+            echo "Proxy software detected — tunneling port 25577"
+          else
+            LOCAL_MC_PORT=25565
+            echo "Standard software detected — tunneling port 25565"
+          fi
+
+          # ── Bore: LOCAL_MC_PORT → bore.pub:FIXED_PORT ──────────────────────
+          # Try fixed ports so players never need to type a port number.
+          # SRV record will carry the port, so domain-only connect always works.
           MC_PORT=""
           for TRY_PORT in 25565 25566 25567 25568 25569; do
-            bore local 25565 --to bore.pub --port ${TRY_PORT} > /tmp/bore_mc.txt 2>&1 &
+            bore local ${LOCAL_MC_PORT} --to bore.pub --port ${TRY_PORT} > /tmp/bore_mc.txt 2>&1 &
             BORE_PID=$!
             sleep 5
             MC_PORT=$(grep -oP 'listening at bore\.pub:\K[0-9]+' /tmp/bore_mc.txt | head -1)
             if [ -n "$MC_PORT" ]; then
-              echo "Bore secured port: bore.pub:${MC_PORT}"
+              echo "Bore secured: bore.pub:${MC_PORT} → localhost:${LOCAL_MC_PORT}"
               break
             else
               echo "Port ${TRY_PORT} busy, trying next..."
@@ -97,7 +107,7 @@ jobs:
             fi
           done
 
-          # ── Cloudflared: WS console 8080 → trycloudflare.com ───────────────
+          # -- Cloudflared: WS console 8080 -> trycloudflare.com ---------------
           cloudflared tunnel --url http://localhost:8080 --no-autoupdate --no-chunked-encoding > /tmp/cf_ws.txt 2>&1 &
 
           echo "Waiting for Cloudflared..."
@@ -107,16 +117,16 @@ jobs:
             [ -n "$CF_URL" ] && break
           done
 
-          [ -z "$MC_PORT" ] && { echo "=== bore failed — all ports busy ===" && cat /tmp/bore_mc.txt && exit 1; }
+          [ -z "$MC_PORT" ] && { echo "=== bore failed -- all ports busy ===" && cat /tmp/bore_mc.txt && exit 1; }
           [ -z "$CF_URL" ]  && { echo "=== cloudflared failed ===" && cat /tmp/cf_ws.txt && exit 1; }
 
           echo "MC tunnel : bore.pub:${MC_PORT}"
           echo "WS tunnel : ${CF_URL}"
 
-          # ── CNAME: SUBDOMAIN → bore.pub ────────────────────────────────────
+          # -- CNAME: SUBDOMAIN -> bore.pub ------------------------------------
           # Why CNAME not A record:
           #   bore.pub IP changes every relay (new runner = new bore server).
-          #   An A record caches the OLD IP even after relay — players can't connect.
+          #   An A record caches the OLD IP even after relay -- players can't connect.
           #   A CNAME delegates resolution to bore.pub itself, so every fresh
           #   connection resolves bore.pub directly and always gets the live IP.
           #   TTL=1 so the SRV port update also flushes within 1 second.
@@ -134,7 +144,7 @@ jobs:
             echo "Deleted stale A record"
           fi
 
-          # Upsert CNAME: SUBDOMAIN → bore.pub (TTL=1 minimum, near-instant flush)
+          # Upsert CNAME: SUBDOMAIN -> bore.pub (TTL=1 minimum, near-instant flush)
           CNAME_EXISTING=$(curl -s \
             "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records?type=CNAME&name=${SUBDOMAIN}" \
             -H "Authorization: Bearer ${CF_TOKEN}" \
@@ -157,14 +167,14 @@ jobs:
               -H "Content-Type: application/json" \
               -d "$CNAME_BODY" | grep -o '"success":[a-z]*'
           fi
-          echo "CNAME updated: ${SUBDOMAIN} → bore.pub (TTL=1)"
+          echo "CNAME updated: ${SUBDOMAIN} -> bore.pub (TTL=1)"
 
-          # ── SRV record ──────────────────────────────────────────────────────
+          # -- SRV record ------------------------------------------------------
           # SRV tells Minecraft clients which port to use on the domain.
           # Since bore uses a fixed port (25565 or first free fallback),
-          # this SRV is stable across relays — only changes if bore port shifts.
-          # Flow: player types SUBDOMAIN → SRV → SUBDOMAIN:MC_PORT
-          #       → CNAME → bore.pub → bore tunnel → MC server
+          # this SRV is stable across relays -- only changes if bore port shifts.
+          # Flow: player types SUBDOMAIN -> SRV -> SUBDOMAIN:MC_PORT
+          #       -> CNAME -> bore.pub -> bore tunnel -> MC server
           SRV_NAME="_minecraft._tcp.${SERVERNAME}"
           SRV_EXISTING=$(curl -s \
             "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records?type=SRV&name=${SRV_NAME}.astrocore.qzz.io" \
@@ -188,20 +198,20 @@ jobs:
               -H "Content-Type: application/json" \
               -d "$SRV_BODY" | grep -o '"success":[a-z]*'
           fi
-          echo "SRV updated: ${SRV_NAME}.astrocore.qzz.io → ${SUBDOMAIN}:${MC_PORT}"
+          echo "SRV updated: ${SRV_NAME}.astrocore.qzz.io -> ${SUBDOMAIN}:${MC_PORT}"
           echo ""
           echo "=============================================="
           echo "  Players connect to: ${SUBDOMAIN}"
-          echo "  (SRV handles port — no port number needed)"
+          echo "  (SRV handles port -- no port number needed)"
           echo "  Direct bore:        bore.pub:${MC_PORT}"
           echo "  SRV port:           ${MC_PORT}"
           echo "=============================================="
 
-          # ── Session file for WS console ─────────────────────────────────────
+          # -- Session file for WS console -------------------------------------
           git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git session_repo
           SESSION_FILE="session_repo/session/${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}.json"
           mkdir -p session_repo/session
-          # SRV record tells Minecraft which port to use — players ALWAYS type just the domain
+          # SRV record tells Minecraft which port to use -- players ALWAYS type just the domain
           # The SRV is updated every run with the actual bore port, so no port in the address.
           MC_CONNECT="${{ github.event.inputs.servername }}.astrocore.qzz.io"
           echo "{\"ws\":\"${CF_URL}\",\"status\":\"online\",\"mc_host\":\"bore.pub\",\"mc_port\":${MC_PORT},\"ip\":\"${MC_CONNECT}\",\"updated\":$(date +%s)}" > "${SESSION_FILE}"
@@ -270,7 +280,7 @@ jobs:
         if: always()
         run: |
           if [ -f "server-env/relay.flag" ]; then
-            echo "Relay flag detected — dispatching next runner..."
+            echo "Relay flag detected -- dispatching next runner..."
             curl -s -X POST \
               -H "Accept: application/vnd.github.v3+json" \
               -H "Authorization: Bearer ${{ secrets.ABSORA_PAT }}" \
