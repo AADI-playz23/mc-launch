@@ -91,22 +91,27 @@ jobs:
           esac
           echo "LOCAL_MC_PORT=${LOCAL_MC_PORT}"
 
-          # ── Bore: LOCAL_MC_PORT → bore.pub:FIXED_PORT ──────────────────────
-          # Try fixed ports so players never need to type a port number.
-          # SRV record will carry the port, so domain-only connect always works.
+          # ── Bore: LOCAL_MC_PORT → bore.pub:RANDOM_PORT ─────────────────────
+          # FIX: Use random high ports to avoid collision with other bore users.
+          # With fixed ports (25565-25569), multiple servers fight for the same
+          # 5 ports on bore.pub — causing "runner runs but IP doesn't work".
+          # SRV record carries the port, so Minecraft resolves it automatically.
           MC_PORT=""
-          for TRY_PORT in 25565 25566 25567 25568 25569; do
+          for ATTEMPT in 1 2 3 4 5; do
+            TRY_PORT=$(shuf -i 10000-60000 -n 1)
+            echo "Attempt ${ATTEMPT}: trying bore port ${TRY_PORT}..."
             bore local ${LOCAL_MC_PORT} --to bore.pub --port ${TRY_PORT} > /tmp/bore_mc.txt 2>&1 &
             BORE_PID=$!
-            sleep 5
+            sleep 6
             MC_PORT=$(grep -oP 'listening at bore\.pub:\K[0-9]+' /tmp/bore_mc.txt | head -1)
             if [ -n "$MC_PORT" ]; then
               echo "Bore secured: bore.pub:${MC_PORT} → localhost:${LOCAL_MC_PORT}"
               break
             else
-              echo "Port ${TRY_PORT} busy, trying next..."
+              echo "Port ${TRY_PORT} failed, retrying with new random port..."
               kill $BORE_PID 2>/dev/null || true
-              sleep 1
+              sleep 2
+              MC_PORT=""
             fi
           done
 
@@ -114,13 +119,14 @@ jobs:
           cloudflared tunnel --url http://localhost:8080 --no-autoupdate --no-chunked-encoding > /tmp/cf_ws.txt 2>&1 &
 
           echo "Waiting for Cloudflared..."
-          for i in $(seq 1 60); do
+          CF_URL=""
+          for i in $(seq 1 90); do
             sleep 1
             CF_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cf_ws.txt | head -1)
             [ -n "$CF_URL" ] && break
           done
 
-          [ -z "$MC_PORT" ] && { echo "=== bore failed -- all ports busy ===" && cat /tmp/bore_mc.txt && exit 1; }
+          [ -z "$MC_PORT" ] && { echo "=== bore failed -- all attempts exhausted ===" && cat /tmp/bore_mc.txt && exit 1; }
           [ -z "$CF_URL" ]  && { echo "=== cloudflared failed ===" && cat /tmp/cf_ws.txt && exit 1; }
 
           echo "MC tunnel : bore.pub:${MC_PORT}"
@@ -174,8 +180,6 @@ jobs:
 
           # -- SRV record ------------------------------------------------------
           # SRV tells Minecraft clients which port to use on the domain.
-          # Since bore uses a fixed port (25565 or first free fallback),
-          # this SRV is stable across relays -- only changes if bore port shifts.
           # Flow: player types SUBDOMAIN -> SRV -> SUBDOMAIN:MC_PORT
           #       -> CNAME -> bore.pub -> bore tunnel -> MC server
           SRV_NAME="_minecraft._tcp.${SERVERNAME}"
@@ -185,7 +189,8 @@ jobs:
             -H "Content-Type: application/json")
           SRV_ID=$(echo "$SRV_EXISTING" | grep -oP '"id":"\K[^"]+' | head -1)
 
-          SRV_BODY=$(printf '{"type":"SRV","name":"%s","ttl":1,"data":{"service":"_minecraft","proto":"_tcp","name":"%s","priority":0,"weight":5,"port":%s,"target":"%s."}}' \
+          # FIX: Removed trailing dot from target — Cloudflare normalizes FQDNs
+          SRV_BODY=$(printf '{"type":"SRV","name":"%s","ttl":1,"data":{"service":"_minecraft","proto":"_tcp","name":"%s","priority":0,"weight":5,"port":%s,"target":"%s"}}' \
             "${SRV_NAME}" "${SUBDOMAIN}" "${MC_PORT}" "${SUBDOMAIN}")
 
           if [ -n "$SRV_ID" ]; then
@@ -211,18 +216,22 @@ jobs:
           echo "=============================================="
 
           # -- Session file for WS console -------------------------------------
+          # FIX: Added retry logic on git push to handle concurrent pushes
           git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git session_repo
           SESSION_FILE="session_repo/session/${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}.json"
           mkdir -p session_repo/session
-          # SRV record tells Minecraft which port to use -- players ALWAYS type just the domain
-          # The SRV is updated every run with the actual bore port, so no port in the address.
           MC_CONNECT="${{ github.event.inputs.servername }}.astrocore.qzz.io"
           echo "{\"ws\":\"${CF_URL}\",\"status\":\"online\",\"mc_host\":\"bore.pub\",\"mc_port\":${MC_PORT},\"ip\":\"${MC_CONNECT}\",\"updated\":$(date +%s)}" > "${SESSION_FILE}"
           cd session_repo
           git config user.name "Absora Engine" && git config user.email "engine@absora.com"
           git add "session/${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}.json"
           git commit -m "Session online: ${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}" || true
-          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git HEAD:main
+          for attempt in 1 2 3; do
+            git pull --rebase origin main &&
+            git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git HEAD:main && break
+            echo "Session push attempt ${attempt} failed, retrying..."
+            sleep 3
+          done
           cd ..
           echo "Session file written."
 
@@ -241,6 +250,7 @@ jobs:
       - name: Save & Relay Protocol
         if: always()
         run: |
+          # ── Mark session offline ──────────────────────────────────────────
           if [ -d "session_repo" ]; then
             cd session_repo
           else
@@ -254,9 +264,15 @@ jobs:
           git config user.email "engine@absora.com"
           git add "session/${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}.json"
           git commit -m "Session offline: ${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}" || true
-          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git HEAD:main || true
+          for attempt in 1 2 3; do
+            git pull --rebase origin main &&
+            git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git HEAD:main && break
+            echo "Offline push attempt ${attempt} failed, retrying..."
+            sleep 3
+          done
           cd ..
 
+          # ── Save server files to storage repo ─────────────────────────────
           TARGET_DIR="storage_repo/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}"
           mkdir -p "$TARGET_DIR"
           rsync -av \
