@@ -44,7 +44,7 @@ jobs:
 
       - name: Pull Cloud Storage
         run: |
-          git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git storage_repo
+          git clone https://${{ secrets.ABSORA_PAT }}@github.com/absoracloud/mc-disk2.git storage_repo
           mkdir -p server-env
           cp -r storage_repo/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/* server-env/ 2>/dev/null || echo "New instance."
 
@@ -53,15 +53,6 @@ jobs:
           npm install ws
           ls -la server.js || { echo "ERROR: server.js not found in repo root!"; exit 1; }
 
-      - name: Install Bore
-        run: |
-          BORE_VERSION=$(curl -sL https://api.github.com/repos/ekzhang/bore/releases/latest \
-            | grep -oP '"tag_name":\s*"\Kv[^"]+')
-          echo "Installing bore ${BORE_VERSION}..."
-          curl -sL "https://github.com/ekzhang/bore/releases/download/${BORE_VERSION}/bore-${BORE_VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar xz
-          chmod +x bore && sudo mv bore /usr/local/bin/bore
-          bore --version
-
       - name: Install Cloudflared
         run: |
           curl -sL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
@@ -69,53 +60,119 @@ jobs:
           chmod +x cloudflared && sudo mv cloudflared /usr/local/bin/cloudflared
           cloudflared --version
 
-      - name: Start Tunnels & Update DNS
+      - name: Setup Public Bore Client (TCP Tunnel)
         run: |
           SERVERNAME="${{ github.event.inputs.servername }}"
-          CF_TOKEN="${{ secrets.CF_API_TOKEN }}"
-          CF_ZONE="${{ secrets.CF_ZONE_ID }}"
-          SUBDOMAIN="${SERVERNAME}.astrocore.qzz.io"
+          INSTANCE_ID="${{ github.event.inputs.instance_id }}"
+          USERNAME="${{ github.event.inputs.username }}"
 
-          # Detect proxy vs standard software to pick correct local port
-          SOFTWARE="${{ github.event.inputs.software }}"
-          echo "Software input received: [${SOFTWARE}]"
-          case "${SOFTWARE}" in
-            proxies.json)
-              LOCAL_MC_PORT=25577
-              echo "Proxy detected: tunneling port 25577"
-              ;;
-            *)
-              LOCAL_MC_PORT=25565
-              echo "Standard detected: tunneling port 25565"
-              ;;
-          esac
-          echo "LOCAL_MC_PORT=${LOCAL_MC_PORT}"
+          # Install bore
+          BORE_VERSION="v0.5.1"
+          curl -sL "https://github.com/ekzhang/bore/releases/download/${BORE_VERSION}/bore-${BORE_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+            -o bore.tar.gz
+          tar xzf bore.tar.gz
+          sudo mv bore /usr/local/bin/bore
+          chmod +x /usr/local/bin/bore
 
-          # ── Bore: LOCAL_MC_PORT → bore.pub:RANDOM_PORT ─────────────────────
-          # FIX: Use random high ports to avoid collision with other bore users.
-          # With fixed ports (25565-25569), multiple servers fight for the same
-          # 5 ports on bore.pub — causing "runner runs but IP doesn't work".
-          # SRV record carries the port, so Minecraft resolves it automatically.
-          MC_PORT=""
-          for ATTEMPT in 1 2 3 4 5; do
-            TRY_PORT=$(shuf -i 10000-60000 -n 1)
-            echo "Attempt ${ATTEMPT}: trying bore port ${TRY_PORT}..."
-            bore local ${LOCAL_MC_PORT} --to bore.pub --port ${TRY_PORT} > /tmp/bore_mc.txt 2>&1 &
-            BORE_PID=$!
-            sleep 6
-            MC_PORT=$(grep -oP 'listening at bore\.pub:\K[0-9]+' /tmp/bore_mc.txt | head -1)
-            if [ -n "$MC_PORT" ]; then
-              echo "Bore secured: bore.pub:${MC_PORT} → localhost:${LOCAL_MC_PORT}"
-              break
-            else
-              echo "Port ${TRY_PORT} failed, retrying with new random port..."
-              kill $BORE_PID 2>/dev/null || true
-              sleep 2
-              MC_PORT=""
-            fi
-          done
+          # Run bore connected to public bore.pub
+          echo "Starting bore tunnel..."
+          bore local 25565 --to bore.pub > /tmp/bore.log 2>&1 &
+          
+          # Wait and parse assigned port
+          sleep 5
+          cat /tmp/bore.log
+          
+          # Extract port from "listening at bore.pub:12345"
+          MC_PORT=$(grep -oP 'bore\.pub:\K\d+' /tmp/bore.log | head -1 || echo "")
+          
+          if [ -z "$MC_PORT" ]; then
+            echo "ERROR: Could not fetch assigned port from bore.pub"
+            exit 1
+          fi
 
-          # -- Cloudflared: WS console 8080 -> trycloudflare.com ---------------
+          echo "Assigned MC port: ${MC_PORT}"
+          BORE_IP="bore.pub"
+
+          echo "BORE_IP=${BORE_IP}" >> $GITHUB_ENV
+          echo "MC_PORT=${MC_PORT}" >> $GITHUB_ENV
+          echo "CUSTOM_DOMAIN=${SERVERNAME}.astrocore.qzz.io" >> $GITHUB_ENV
+          echo "MC_CONNECT=${SERVERNAME}.astrocore.qzz.io" >> $GITHUB_ENV
+
+          # Keep-alive loop to prevent bore.pub idle timeout drops
+          (
+            while true; do
+              sleep 60
+              nc -z -w 2 bore.pub ${MC_PORT} >/dev/null 2>&1 || true
+            done
+          ) &
+
+      - name: Register Cloudflare SRV Record
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
+        run: |
+          SERVERNAME="${{ github.event.inputs.servername }}"
+          SRV_NAME="_minecraft._tcp.${SERVERNAME}"
+          SRV_FQDN="_minecraft._tcp.${SERVERNAME}.astrocore.qzz.io"
+
+          echo "Registering SRV: ${SERVERNAME}.astrocore.qzz.io → bore.pub:${MC_PORT}"
+
+          # Check for existing SRV
+          EXISTING=$(curl -s -X GET \
+            "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records?type=SRV&name=${SRV_FQDN}" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json")
+
+          RECORD_ID=$(echo "$EXISTING" | python3 -c "
+          import sys, json
+          r = json.load(sys.stdin)
+          results = r.get('result', [])
+          print(results[0]['id'] if results else '')
+          " 2>/dev/null || echo "")
+
+          SRV_DATA='{
+            "type": "SRV",
+            "name": "'"${SRV_NAME}"'",
+            "data": {
+              "service": "_minecraft",
+              "proto": "_tcp",
+              "name": "'"${SERVERNAME}"'",
+              "priority": 0,
+              "weight": 5,
+              "port": '"${MC_PORT}"',
+              "target": "bore.pub"
+            },
+            "ttl": 60
+          }'
+
+          if [ -n "$RECORD_ID" ]; then
+            curl -s -X PUT \
+              "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${RECORD_ID}" \
+              -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "${SRV_DATA}" | python3 -c "import sys,json; r=json.load(sys.stdin); print('SRV updated!' if r.get('success') else 'Failed: '+str(r.get('errors',[])))"
+          else
+            curl -s -X POST \
+              "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records" \
+              -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "${SRV_DATA}" | python3 -c "import sys,json; r=json.load(sys.stdin); print('SRV created!' if r.get('success') else 'Failed: '+str(r.get('errors',[])))"
+          fi
+
+          echo "Players connect to: ${SERVERNAME}.astrocore.qzz.io"
+
+      - name: Ensure Server Properties
+        run: |
+          cd server-env
+          if [ ! -f "server.properties" ]; then
+            cat > server.properties << 'EOF'
+          online-mode=true
+          server-port=25565
+          EOF
+          fi
+
+      - name: Start Cloudflared Tunnel & Write Session
+        run: |
           cloudflared tunnel --url http://localhost:8080 --no-autoupdate --no-chunked-encoding > /tmp/cf_ws.txt 2>&1 &
 
           echo "Waiting for Cloudflared..."
@@ -126,114 +183,29 @@ jobs:
             [ -n "$CF_URL" ] && break
           done
 
-          [ -z "$MC_PORT" ] && { echo "=== bore failed -- all attempts exhausted ===" && cat /tmp/bore_mc.txt && exit 1; }
-          [ -z "$CF_URL" ]  && { echo "=== cloudflared failed ===" && cat /tmp/cf_ws.txt && exit 1; }
+          [ -z "$CF_URL" ] && { echo "=== cloudflared failed ===" && cat /tmp/cf_ws.txt && exit 1; }
 
-          echo "MC tunnel : bore.pub:${MC_PORT}"
-          echo "WS tunnel : ${CF_URL}"
-
-          # -- CNAME: SUBDOMAIN -> bore.pub ------------------------------------
-          # Why CNAME not A record:
-          #   bore.pub IP changes every relay (new runner = new bore server).
-          #   An A record caches the OLD IP even after relay -- players can't connect.
-          #   A CNAME delegates resolution to bore.pub itself, so every fresh
-          #   connection resolves bore.pub directly and always gets the live IP.
-          #   TTL=1 so the SRV port update also flushes within 1 second.
-
-          # Delete any stale A record first (A and CNAME can't coexist)
-          A_EXISTING=$(curl -s \
-            "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records?type=A&name=${SUBDOMAIN}" \
-            -H "Authorization: Bearer ${CF_TOKEN}" \
-            -H "Content-Type: application/json")
-          A_ID=$(echo "$A_EXISTING" | grep -oP '"id":"\K[^"]+' | head -1)
-          if [ -n "$A_ID" ]; then
-            curl -s -X DELETE \
-              "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records/${A_ID}" \
-              -H "Authorization: Bearer ${CF_TOKEN}" | grep -o '"success":[a-z]*'
-            echo "Deleted stale A record"
-          fi
-
-          # Upsert CNAME: SUBDOMAIN -> bore.pub (TTL=1 minimum, near-instant flush)
-          CNAME_EXISTING=$(curl -s \
-            "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records?type=CNAME&name=${SUBDOMAIN}" \
-            -H "Authorization: Bearer ${CF_TOKEN}" \
-            -H "Content-Type: application/json")
-          CNAME_ID=$(echo "$CNAME_EXISTING" | grep -oP '"id":"\K[^"]+' | head -1)
-
-          CNAME_BODY=$(printf '{"type":"CNAME","name":"%s","content":"bore.pub","ttl":1,"proxied":false}' \
-            "${SUBDOMAIN}")
-
-          if [ -n "$CNAME_ID" ]; then
-            curl -s -X PUT \
-              "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records/${CNAME_ID}" \
-              -H "Authorization: Bearer ${CF_TOKEN}" \
-              -H "Content-Type: application/json" \
-              -d "$CNAME_BODY" | grep -o '"success":[a-z]*'
-          else
-            curl -s -X POST \
-              "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records" \
-              -H "Authorization: Bearer ${CF_TOKEN}" \
-              -H "Content-Type: application/json" \
-              -d "$CNAME_BODY" | grep -o '"success":[a-z]*'
-          fi
-          echo "CNAME updated: ${SUBDOMAIN} -> bore.pub (TTL=1)"
-
-          # -- SRV record ------------------------------------------------------
-          # SRV tells Minecraft clients which port to use on the domain.
-          # Flow: player types SUBDOMAIN -> SRV -> SUBDOMAIN:MC_PORT
-          #       -> CNAME -> bore.pub -> bore tunnel -> MC server
-          SRV_NAME="_minecraft._tcp.${SERVERNAME}"
-          SRV_EXISTING=$(curl -s \
-            "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records?type=SRV&name=${SRV_NAME}.astrocore.qzz.io" \
-            -H "Authorization: Bearer ${CF_TOKEN}" \
-            -H "Content-Type: application/json")
-          SRV_ID=$(echo "$SRV_EXISTING" | grep -oP '"id":"\K[^"]+' | head -1)
-
-          # FIX: Removed trailing dot from target — Cloudflare normalizes FQDNs
-          SRV_BODY=$(printf '{"type":"SRV","name":"%s","ttl":1,"data":{"service":"_minecraft","proto":"_tcp","name":"%s","priority":0,"weight":5,"port":%s,"target":"%s"}}' \
-            "${SRV_NAME}" "${SUBDOMAIN}" "${MC_PORT}" "${SUBDOMAIN}")
-
-          if [ -n "$SRV_ID" ]; then
-            curl -s -X PUT \
-              "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records/${SRV_ID}" \
-              -H "Authorization: Bearer ${CF_TOKEN}" \
-              -H "Content-Type: application/json" \
-              -d "$SRV_BODY" | grep -o '"success":[a-z]*'
-          else
-            curl -s -X POST \
-              "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records" \
-              -H "Authorization: Bearer ${CF_TOKEN}" \
-              -H "Content-Type: application/json" \
-              -d "$SRV_BODY" | grep -o '"success":[a-z]*'
-          fi
-          echo "SRV updated: ${SRV_NAME}.astrocore.qzz.io -> ${SUBDOMAIN}:${MC_PORT}"
-          echo ""
           echo "=============================================="
-          echo "  Players connect to: ${SUBDOMAIN}"
-          echo "  (SRV handles port -- no port number needed)"
-          echo "  Direct bore:        bore.pub:${MC_PORT}"
-          echo "  SRV port:           ${MC_PORT}"
+          echo "  Players connect to: ${MC_CONNECT}"
+          echo "  Console WebSocket:  ${CF_URL}"
+          echo "  Bore tunnel:        ${BORE_IP}:${MC_PORT}"
           echo "=============================================="
 
-          # -- Session file for WS console -------------------------------------
-          # FIX: Added retry logic on git push to handle concurrent pushes
-          git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git session_repo
+          # Write session file
+          git clone https://${{ secrets.ABSORA_PAT }}@github.com/absoracloud/mc-launch.git session_repo
           SESSION_FILE="session_repo/session/${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}.json"
           mkdir -p session_repo/session
-          MC_CONNECT="${{ github.event.inputs.servername }}.astrocore.qzz.io"
-          echo "{\"ws\":\"${CF_URL}\",\"status\":\"online\",\"mc_host\":\"bore.pub\",\"mc_port\":${MC_PORT},\"ip\":\"${MC_CONNECT}\",\"updated\":$(date +%s)}" > "${SESSION_FILE}"
+          echo "{\"ws\":\"${CF_URL}\",\"status\":\"online\",\"ip\":\"${MC_CONNECT}\",\"updated\":$(date +%s)}" > "${SESSION_FILE}"
           cd session_repo
           git config user.name "Absora Engine" && git config user.email "engine@absora.com"
           git add "session/${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}.json"
           git commit -m "Session online: ${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}" || true
           for attempt in 1 2 3; do
             git pull --rebase origin main &&
-            git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git HEAD:main && break
-            echo "Session push attempt ${attempt} failed, retrying..."
+            git push https://${{ secrets.ABSORA_PAT }}@github.com/absoracloud/mc-launch.git HEAD:main && break
             sleep 3
           done
           cd ..
-          echo "Session file written."
 
       - name: Ignite Server
         run: |
@@ -250,11 +222,11 @@ jobs:
       - name: Save & Relay Protocol
         if: always()
         run: |
-          # ── Mark session offline ──────────────────────────────────────────
+          # Mark session offline
           if [ -d "session_repo" ]; then
             cd session_repo
           else
-            git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git session_repo
+            git clone https://${{ secrets.ABSORA_PAT }}@github.com/absoracloud/mc-launch.git session_repo
             cd session_repo
           fi
           mkdir -p session
@@ -266,21 +238,17 @@ jobs:
           git commit -m "Session offline: ${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}" || true
           for attempt in 1 2 3; do
             git pull --rebase origin main &&
-            git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git HEAD:main && break
-            echo "Offline push attempt ${attempt} failed, retrying..."
+            git push https://${{ secrets.ABSORA_PAT }}@github.com/absoracloud/mc-launch.git HEAD:main && break
             sleep 3
           done
           cd ..
 
-          # ── Save server files to storage repo ─────────────────────────────
+          # Save server files
           TARGET_DIR="storage_repo/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}"
           mkdir -p "$TARGET_DIR"
           rsync -av \
-            --exclude='storage_repo' \
-            --exclude='session_repo' \
-            --exclude='relay.flag' \
-            --exclude='*.pid' \
-            --exclude='*.log' \
+            --exclude='storage_repo' --exclude='session_repo' \
+            --exclude='relay.flag' --exclude='*.pid' --exclude='*.log' \
             server-env/ "$TARGET_DIR/"
 
           cd storage_repo
@@ -288,11 +256,9 @@ jobs:
           git config user.email "relay@absora.com"
           git add .
           git commit -m "Save: ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }} @ $(date -u '+%Y-%m-%d %H:%M UTC')" || echo "No changes."
-
           for attempt in 1 2 3; do
             git pull --rebase origin main && \
-            git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main && break
-            echo "Push attempt ${attempt} failed, retrying..."
+            git push https://${{ secrets.ABSORA_PAT }}@github.com/absoracloud/mc-disk2.git HEAD:main && break
             sleep 5
           done
 
@@ -305,7 +271,7 @@ jobs:
               -H "Accept: application/vnd.github.v3+json" \
               -H "Authorization: Bearer ${{ secrets.ABSORA_PAT }}" \
               -H "Content-Type: application/json" \
-              https://api.github.com/repos/AADI-playz23/mc-launch/actions/workflows/host.yml/dispatches \
+              https://api.github.com/repos/absoracloud/mc-launch/actions/workflows/host.yml/dispatches \
               -d "$(printf '{"ref":"main","inputs":{"username":"%s","instance_id":"%s","ram":"%s","java":"%s","software":"%s","version":"%s","servername":"%s"}}' \
                 '${{ github.event.inputs.username }}' \
                 '${{ github.event.inputs.instance_id }}' \

@@ -1,0 +1,158 @@
+name: FRP Server (Always-On TCP Proxy)
+on:
+  workflow_dispatch:
+    inputs:
+      relay:
+        description: 'Is this a relay restart?'
+        required: false
+        default: 'false'
+        type: string
+
+jobs:
+  frp-server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+
+      - name: Install FRP Server
+        run: |
+          FRP_VERSION="0.61.1"
+          curl -sL "https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/frp_${FRP_VERSION}_linux_amd64.tar.gz" \
+            -o frp.tar.gz
+          tar xzf frp.tar.gz
+          mv frp_${FRP_VERSION}_linux_amd64/frps /usr/local/bin/frps
+          chmod +x /usr/local/bin/frps
+          frps --version || echo "frps installed"
+
+      - name: Get Public IP
+        run: |
+          PUBLIC_IP=$(curl -s https://api.ipify.org)
+          echo "PUBLIC_IP=${PUBLIC_IP}" >> $GITHUB_ENV
+          echo "Runner public IP: ${PUBLIC_IP}"
+
+      - name: Update Cloudflare DNS (frp.astrocore.qzz.io → runner IP)
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
+        run: |
+          SUBDOMAIN="frp"
+          FQDN="frp.astrocore.qzz.io"
+
+          echo "Updating DNS: ${FQDN} → ${PUBLIC_IP}"
+
+          # Check for existing A record
+          EXISTING=$(curl -s -X GET \
+            "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records?type=A&name=${FQDN}" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json")
+
+          RECORD_ID=$(echo "$EXISTING" | python3 -c "
+          import sys, json
+          r = json.load(sys.stdin)
+          results = r.get('result', [])
+          print(results[0]['id'] if results else '')
+          " 2>/dev/null || echo "")
+
+          A_DATA="{\"type\":\"A\",\"name\":\"${SUBDOMAIN}\",\"content\":\"${PUBLIC_IP}\",\"ttl\":60,\"proxied\":false}"
+
+          if [ -n "$RECORD_ID" ]; then
+            echo "Updating existing A record..."
+            curl -s -X PUT \
+              "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${RECORD_ID}" \
+              -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "${A_DATA}" | python3 -c "import sys,json; r=json.load(sys.stdin); print('DNS updated!' if r.get('success') else 'DNS update failed: '+str(r.get('errors',[])))"
+          else
+            echo "Creating new A record..."
+            curl -s -X POST \
+              "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records" \
+              -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "${A_DATA}" | python3 -c "import sys,json; r=json.load(sys.stdin); print('DNS created!' if r.get('success') else 'DNS creation failed: '+str(r.get('errors',[])))"
+          fi
+
+      - name: Write FRP Server Info to Repo
+        run: |
+          git config user.name "Absora Engine"
+          git config user.email "engine@absora.com"
+          mkdir -p session
+          echo "{\"ip\":\"${PUBLIC_IP}\",\"port\":7000,\"status\":\"online\",\"updated\":$(date +%s)}" > session/frps_info.json
+          git add session/frps_info.json
+          git commit -m "FRP server online: ${PUBLIC_IP}" || true
+          for attempt in 1 2 3; do
+            git pull --rebase origin main &&
+            git push https://${{ secrets.ABSORA_PAT }}@github.com/absoracloud/mc-launch.git HEAD:main && break
+            echo "Push attempt ${attempt} failed, retrying..."
+            sleep 3
+          done
+
+      - name: Create FRP Server Config
+        env:
+          FRP_TOKEN: ${{ secrets.FRP_TOKEN }}
+        run: |
+          cat > frps.toml << EOF
+          bindPort = 7000
+          auth.method = "token"
+          auth.token = "${FRP_TOKEN}"
+
+          # Allow ports 25001-25200 for MC servers
+          allowPorts = [
+            { start = 25001, end = 25200 }
+          ]
+
+          # Logging
+          log.to = "console"
+          log.level = "info"
+          EOF
+
+      - name: Run FRP Server
+        run: |
+          echo "=============================================="
+          echo "  FRP Server Online"
+          echo "  IP: ${PUBLIC_IP}"
+          echo "  Control Port: 7000"
+          echo "  MC Ports: 25001-25200"
+          echo "=============================================="
+
+          # Auto-relay timer: stop 10 min before GitHub's 6hr limit
+          MAX_SECONDS=20400  # 340 minutes = 5h40m
+          (
+            sleep ${MAX_SECONDS}
+            echo "FRP relay timer reached — preparing to restart..."
+            # Write relay flag
+            touch relay.flag
+            # Kill frps gracefully
+            pkill -SIGTERM frps || true
+          ) &
+
+          # Run frps (blocks until killed)
+          frps -c frps.toml || true
+
+          echo "FRP server stopped."
+
+      - name: Mark FRP Offline & Trigger Relay
+        if: always()
+        run: |
+          # Update session to offline
+          git config user.name "Absora Engine"
+          git config user.email "engine@absora.com"
+          git pull --rebase origin main || true
+          echo "{\"ip\":\"\",\"port\":7000,\"status\":\"relaying\",\"updated\":$(date +%s)}" > session/frps_info.json
+          git add session/frps_info.json
+          git commit -m "FRP server relaying" || true
+          git push https://${{ secrets.ABSORA_PAT }}@github.com/absoracloud/mc-launch.git HEAD:main || true
+
+          # Trigger next relay
+          if [ -f "relay.flag" ]; then
+            echo "Dispatching next FRP server relay..."
+            curl -s -X POST \
+              -H "Accept: application/vnd.github.v3+json" \
+              -H "Authorization: Bearer ${{ secrets.ABSORA_PAT }}" \
+              -H "Content-Type: application/json" \
+              https://api.github.com/repos/absoracloud/mc-launch/actions/workflows/frp_server.yml/dispatches \
+              -d '{"ref":"main","inputs":{"relay":"true"}}'
+            echo "Next FRP relay dispatched."
+          fi

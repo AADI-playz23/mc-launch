@@ -1,0 +1,137 @@
+name: Bore Server (Always-On TCP Proxy)
+on:
+  workflow_dispatch:
+    inputs:
+      relay:
+        description: 'Is this a relay restart?'
+        required: false
+        default: 'false'
+        type: string
+
+jobs:
+  bore-server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+
+      - name: Install bored (Bore Server)
+        run: |
+          BORE_VERSION="v0.5.1"
+          curl -sL "https://github.com/ekzhang/bore/releases/download/${BORE_VERSION}/bore-${BORE_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+            -o bore.tar.gz
+          tar xzf bore.tar.gz
+          sudo mv bore /usr/local/bin/bored
+          chmod +x /usr/local/bin/bored
+          bored --version || echo "bored installed"
+
+      - name: Get Public IP
+        run: |
+          PUBLIC_IP=$(curl -s https://api.ipify.org)
+          echo "PUBLIC_IP=${PUBLIC_IP}" >> $GITHUB_ENV
+          echo "Runner public IP: ${PUBLIC_IP}"
+
+      - name: Update Cloudflare DNS (bore.astrocore.qzz.io → runner IP)
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
+        run: |
+          SUBDOMAIN="bore"
+          FQDN="bore.astrocore.qzz.io"
+
+          echo "Updating DNS: ${FQDN} → ${PUBLIC_IP}"
+
+          # Check for existing A record
+          EXISTING=$(curl -s -X GET \
+            "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records?type=A&name=${FQDN}" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json")
+
+          RECORD_ID=$(echo "$EXISTING" | python3 -c "
+          import sys, json
+          r = json.load(sys.stdin)
+          results = r.get('result', [])
+          print(results[0]['id'] if results else '')
+          " 2>/dev/null || echo "")
+
+          A_DATA="{\"type\":\"A\",\"name\":\"${SUBDOMAIN}\",\"content\":\"${PUBLIC_IP}\",\"ttl\":60,\"proxied\":false}"
+
+          if [ -n "$RECORD_ID" ]; then
+            echo "Updating existing A record..."
+            curl -s -X PUT \
+              "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${RECORD_ID}" \
+              -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "${A_DATA}" | python3 -c "import sys,json; r=json.load(sys.stdin); print('DNS updated!' if r.get('success') else 'DNS update failed: '+str(r.get('errors',[])))"
+          else
+            echo "Creating new A record..."
+            curl -s -X POST \
+              "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records" \
+              -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "${A_DATA}" | python3 -c "import sys,json; r=json.load(sys.stdin); print('DNS created!' if r.get('success') else 'DNS creation failed: '+str(r.get('errors',[])))"
+          fi
+
+      - name: Write Bore Server Info to Repo
+        run: |
+          git config user.name "Absora Engine"
+          git config user.email "engine@absora.com"
+          mkdir -p session
+          echo "{\"ip\":\"${PUBLIC_IP}\",\"port\":7850,\"status\":\"online\",\"updated\":$(date +%s)}" > session/bore_info.json
+          git add session/bore_info.json
+          git commit -m "Bore server online: ${PUBLIC_IP}" || true
+          for attempt in 1 2 3; do
+            git pull --rebase origin main &&
+            git push https://${{ secrets.ABSORA_PAT }}@github.com/absoracloud/mc-launch.git HEAD:main && break
+            echo "Push attempt ${attempt} failed, retrying..."
+            sleep 3
+          done
+
+      - name: Run Bore Server
+        env:
+          BORE_SECRET: ${{ secrets.BORE_SECRET }}
+        run: |
+          echo "=============================================="
+          echo "  Bore Server Online"
+          echo "  IP: ${PUBLIC_IP}"
+          echo "  Control Port: 7850"
+          echo "=============================================="
+
+          # Auto-relay timer: stop 10 min before GitHub's 6hr limit
+          MAX_SECONDS=20400  # 340 minutes = 5h40m
+          (
+            sleep ${MAX_SECONDS}
+            echo "Bore relay timer reached — preparing to restart..."
+            touch relay.flag
+            pkill -SIGKILL bored || true
+          ) &
+
+          # Run bored server (blocks until killed)
+          # --min-port allows clients to request ports >= 25000
+          bored server --min-port 25000 --secret "${BORE_SECRET}" || true
+
+          echo "Bore server stopped."
+
+      - name: Mark Bore Offline & Trigger Relay
+        if: always()
+        run: |
+          git config user.name "Absora Engine"
+          git config user.email "engine@absora.com"
+          git pull --rebase origin main || true
+          echo "{\"ip\":\"\",\"port\":7850,\"status\":\"relaying\",\"updated\":$(date +%s)}" > session/bore_info.json
+          git add session/bore_info.json
+          git commit -m "Bore server relaying" || true
+          git push https://${{ secrets.ABSORA_PAT }}@github.com/absoracloud/mc-launch.git HEAD:main || true
+
+          if [ -f "relay.flag" ]; then
+            echo "Dispatching next Bore server relay..."
+            curl -s -X POST \
+              -H "Accept: application/vnd.github.v3+json" \
+              -H "Authorization: Bearer ${{ secrets.ABSORA_PAT }}" \
+              -H "Content-Type: application/json" \
+              https://api.github.com/repos/absoracloud/mc-launch/actions/workflows/bore_server.yml/dispatches \
+              -d '{"ref":"main","inputs":{"relay":"true"}}'
+            echo "Next Bore relay dispatched."
+          fi
