@@ -24,6 +24,7 @@ const logHistory  = [];
 const MAX_HISTORY = 200;
 let mcProcess     = null;
 let serverState   = 'stopped';
+let minekubeError = false;  // Track Minekube endpoint errors
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function broadcastAll(msg) {
@@ -44,6 +45,29 @@ function broadcastLog(msg) {
 function broadcastState(state) {
     serverState = state;
     broadcastAll(JSON.stringify({ type: 'state', state }));
+}
+
+// ── Minekube Error Detection ─────────────────────────────────────────────────
+function checkMinekubeError(text) {
+    if (minekubeError) return; // Already detected
+    if (text.includes('endpoint name is not available') || 
+        text.includes('invalid token') ||
+        (text.includes('[connect]') && text.includes('401 Unauthorized'))) {
+        minekubeError = true;
+        broadcastLog('\n');
+        broadcastLog('╔══════════════════════════════════════════════════════════════╗\n');
+        broadcastLog('║  ⚠  MINEKUBE ENDPOINT NAME ALREADY TAKEN                   ║\n');
+        broadcastLog('║                                                              ║\n');
+        broadcastLog(`║  The name "${servername}" is already registered by another   ║\n`);
+        broadcastLog('║  user on Minekube Connect.                                  ║\n');
+        broadcastLog('║                                                              ║\n');
+        broadcastLog('║  ➜ Go to Dashboard → Wipe this instance                     ║\n');
+        broadcastLog('║  ➜ Create a new server with a different, unique name         ║\n');
+        broadcastLog('║  ➜ Try names like: myserver123, coolsmp, etc.                ║\n');
+        broadcastLog('╚══════════════════════════════════════════════════════════════╝\n');
+        broadcastLog('\n');
+        broadcastAll(JSON.stringify({ type: 'minekube_error', message: `"${servername}" is already taken on Minekube. Choose a different server name.` }));
+    }
 }
 
 // ── Stop: save world then shut down ──────────────────────────────────────────
@@ -71,7 +95,7 @@ const runtimeTimer = setInterval(() => {
             mcProcess.stdin.write('title @a times 10 70 20\n');
             mcProcess.stdin.write('title @a subtitle {"text":"Server restarts in 5 minutes","color":"yellow"}\n');
             mcProcess.stdin.write('title @a title {"text":"⚠ Relay Soon","color":"gold"}\n');
-            mcProcess.stdin.write('say [Absora] Server will relay in 5 minutes. Reconnect to ${serverDomain} after restart!\n');
+            mcProcess.stdin.write(`say [Absora] Server will relay in 5 minutes. Reconnect to ${serverDomain} after restart!\n`);
         }
     }
 
@@ -81,7 +105,7 @@ const runtimeTimer = setInterval(() => {
             mcProcess.stdin.write('title @a times 10 70 20\n');
             mcProcess.stdin.write('title @a subtitle {"text":"Reconnect in ~2 minutes","color":"red"}\n');
             mcProcess.stdin.write('title @a title {"text":"⚡ Relay in 60s","color":"red"}\n');
-            mcProcess.stdin.write('say [Absora] Relay in 60 seconds — reconnect to ${serverDomain} after restart!\n');
+            mcProcess.stdin.write(`say [Absora] Relay in 60 seconds — reconnect to ${serverDomain} after restart!\n`);
         }
     }
 
@@ -95,10 +119,10 @@ const runtimeTimer = setInterval(() => {
             mcProcess.stdin.write('title @a times 10 100 20\n');
             mcProcess.stdin.write('title @a subtitle {"text":"Reconnect in ~2 minutes","color":"gray"}\n');
             mcProcess.stdin.write('title @a title {"text":"Server Restarting","color":"white"}\n');
-            mcProcess.stdin.write('say [Absora] Relay started. Saving world — reconnect to ${serverDomain} in 2 minutes!\n');
+            mcProcess.stdin.write(`say [Absora] Relay started. Saving world — reconnect to ${serverDomain} in 2 minutes!\n`);
             mcProcess.stdin.write('save-all\n');
             setTimeout(() => {
-                mcProcess.stdin.write('kick @a §eServer relay in progress. Reconnect to §b${serverDomain} §ein ~2 min!\n');
+                mcProcess.stdin.write(`kick @a §eServer relay in progress. Reconnect to §b${serverDomain} §ein ~2 min!\n`);
                 setTimeout(() => mcProcess.stdin.write('stop\n'), 3000);
             }, 5000);
         }
@@ -145,6 +169,7 @@ wss.on('connection', (ws) => {
     ws.on('message', (raw) => {
         try {
             const data = JSON.parse(raw.toString());
+            if (data.type === 'ping') return; // Keepalive from console
             if (data.type !== 'command') return;
             const cmd = (data.command || '').trim().toLowerCase();
 
@@ -247,8 +272,16 @@ function startMinecraft() {
     mcProcess = spawn(launchCmd, launchArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
     broadcastState('running');
 
-    mcProcess.stdout.on('data', (d) => broadcastLog(d.toString()));
-    mcProcess.stderr.on('data', (d) => broadcastLog(d.toString()));
+    mcProcess.stdout.on('data', (d) => {
+        const text = d.toString();
+        checkMinekubeError(text);  // Check for Minekube endpoint errors
+        broadcastLog(text);
+    });
+    mcProcess.stderr.on('data', (d) => {
+        const text = d.toString();
+        checkMinekubeError(text);  // Check stderr too
+        broadcastLog(text);
+    });
 
     mcProcess.on('exit', () => {
         const prev = serverState;
