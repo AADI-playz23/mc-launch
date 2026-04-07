@@ -44,7 +44,7 @@ jobs:
 
       - name: Pull Cloud Storage
         run: |
-          git clone https://${{ secrets.ABSORA_PAT }}@github.com/absoracloud/mc-disk2.git storage_repo
+          git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git storage_repo
           mkdir -p server-env
           cp -r storage_repo/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/* server-env/ 2>/dev/null || echo "New instance."
 
@@ -192,7 +192,7 @@ jobs:
           echo "=============================================="
 
           # Write session file
-          git clone https://${{ secrets.ABSORA_PAT }}@github.com/absoracloud/mc-launch.git session_repo
+          git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git session_repo
           SESSION_FILE="session_repo/session/${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}.json"
           mkdir -p session_repo/session
           echo "{\"ws\":\"${CF_URL}\",\"status\":\"online\",\"ip\":\"${MC_CONNECT}\",\"updated\":$(date +%s)}" > "${SESSION_FILE}"
@@ -202,7 +202,7 @@ jobs:
           git commit -m "Session online: ${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}" || true
           for attempt in 1 2 3; do
             git pull --rebase origin main &&
-            git push https://${{ secrets.ABSORA_PAT }}@github.com/absoracloud/mc-launch.git HEAD:main && break
+            git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git HEAD:main && break
             sleep 3
           done
           cd ..
@@ -226,7 +226,7 @@ jobs:
           if [ -d "session_repo" ]; then
             cd session_repo
           else
-            git clone https://${{ secrets.ABSORA_PAT }}@github.com/absoracloud/mc-launch.git session_repo
+            git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git session_repo
             cd session_repo
           fi
           mkdir -p session
@@ -238,7 +238,7 @@ jobs:
           git commit -m "Session offline: ${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}" || true
           for attempt in 1 2 3; do
             git pull --rebase origin main &&
-            git push https://${{ secrets.ABSORA_PAT }}@github.com/absoracloud/mc-launch.git HEAD:main && break
+            git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git HEAD:main && break
             sleep 3
           done
           cd ..
@@ -258,7 +258,7 @@ jobs:
           git commit -m "Save: ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }} @ $(date -u '+%Y-%m-%d %H:%M UTC')" || echo "No changes."
           for attempt in 1 2 3; do
             git pull --rebase origin main && \
-            git push https://${{ secrets.ABSORA_PAT }}@github.com/absoracloud/mc-disk2.git HEAD:main && break
+            git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main && break
             sleep 5
           done
 
@@ -271,7 +271,7 @@ jobs:
               -H "Accept: application/vnd.github.v3+json" \
               -H "Authorization: Bearer ${{ secrets.ABSORA_PAT }}" \
               -H "Content-Type: application/json" \
-              https://api.github.com/repos/absoracloud/mc-launch/actions/workflows/host.yml/dispatches \
+              https://api.github.com/repos/AADI-playz23/mc-launch/actions/workflows/host.yml/dispatches \
               -d "$(printf '{"ref":"main","inputs":{"username":"%s","instance_id":"%s","ram":"%s","java":"%s","software":"%s","version":"%s","servername":"%s"}}' \
                 '${{ github.event.inputs.username }}' \
                 '${{ github.event.inputs.instance_id }}' \
