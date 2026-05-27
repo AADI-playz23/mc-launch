@@ -225,9 +225,17 @@ function startMinecraft() {
             try {
                 const jsonPath = path.join('..', softwareFile);
                 if (!fs.existsSync(jsonPath)) throw new Error(`${softwareFile} missing`);
-                const db  = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
-                const url = (db.versions || db)[versionKey];
-                if (!url) throw new Error(`Version "${versionKey}" not found in ${softwareFile}`);
+                const db = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+
+                // ── FIX: Resolve "latest" to actual version string ────────────
+                const resolvedVersion = versionKey === 'latest' ? db.latest : versionKey;
+                if (!resolvedVersion) throw new Error(`Could not resolve version "${versionKey}" — "latest" key missing in ${softwareFile}`);
+
+                const url = (db.versions || db)[resolvedVersion];
+                if (!url) throw new Error(`Version "${resolvedVersion}" not found in ${softwareFile}`);
+                // ─────────────────────────────────────────────────────────────
+
+                broadcastLog(`[Absora Engine] Resolved version: ${resolvedVersion}\n`);
                 broadcastLog(`[Absora Engine] Fetching: ${url}\n`);
                 execSync(`wget -q -O server.jar "${url}"`, { stdio: 'inherit' });
                 broadcastLog('[Absora Engine] Download complete. Igniting...\n');
@@ -274,12 +282,12 @@ function startMinecraft() {
 
     mcProcess.stdout.on('data', (d) => {
         const text = d.toString();
-        checkMinekubeError(text);  // Check for Minekube endpoint errors
+        checkMinekubeError(text);
         broadcastLog(text);
     });
     mcProcess.stderr.on('data', (d) => {
         const text = d.toString();
-        checkMinekubeError(text);  // Check stderr too
+        checkMinekubeError(text);
         broadcastLog(text);
     });
 
@@ -296,8 +304,6 @@ function startMinecraft() {
             broadcastLog('\n[Absora Engine] Server stopped. Saving world to cloud...\n');
             broadcastLog('[Absora Engine] World save in progress — do not close Absora Engine.\n');
             clearInterval(pingInterval);
-            // Wait 3s so clients receive the stopped state, then exit.
-            // host.yml Save & Relay step runs after this and pushes world to GitHub.
             setTimeout(() => process.exit(0), 3000);
         }
     });
