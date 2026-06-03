@@ -2,6 +2,7 @@
   "name": "absoracloud-v2",
   "version": "1.0.0",
   "description": "AbsoraCloud Vercel API with Cloudflare D1",
+  "type": "module",
   "scripts": {
     "dev": "vercel dev"
   },
