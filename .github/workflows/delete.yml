@@ -1,0 +1,31 @@
+name: Absora Instance Deletion
+on:
+  workflow_dispatch:
+    inputs:
+      username:
+        required: true
+      instance_id:
+        required: true
+
+jobs:
+  delete-instance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Storage Array
+        run: git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git storage
+
+      - name: Wipe Instance Data
+        run: |
+          cd storage
+          # Delete the entire instance directory to free up space and purge data
+          rm -rf ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}
+          
+      - name: Commit Purge
+        run: |
+          cd storage
+          git config user.name "Absora Purge Engine"
+          git config user.email "engine@absora.com"
+          git pull origin main --rebase
+          git add -u
+          git commit -m "Purged instance: ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}" || true
+          git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main
