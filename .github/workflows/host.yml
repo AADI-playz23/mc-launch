@@ -1,284 +1,45 @@
-name: Run Server
+name: AbsoraCloud Multi-Tenant Runner
+
 on:
   workflow_dispatch:
     inputs:
-      username:
-        required: true
-        type: string
-      instance_id:
-        required: true
-        type: string
-      ram:
-        required: true
-        type: string
-      java:
-        required: true
-        type: string
-      software:
+      runner_type:
+        description: 'Type of runner'
         required: false
-        default: 'paper.json'
-        type: string
-      version:
-        required: false
-        default: 'latest'
-        type: string
-      servername:
-        required: false
-        default: 'server'
-        type: string
+        default: 'multi-tenant'
+  repository_dispatch:
+    types: [start-runner]
 
 jobs:
-  run-server:
+  run-worker:
     runs-on: ubuntu-latest
-    timeout-minutes: 380
-
     steps:
-      - name: Setup Dynamic Java
-        uses: actions/setup-java@v3
-        with:
-          distribution: 'temurin'
-          java-version: ${{ github.event.inputs.java }}
-
-      - name: Fetch Orchestrator Scripts
+      - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Pull Cloud Storage
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
         run: |
-          git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git storage_repo
-          mkdir -p server-env
-          cp -r storage_repo/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}/* server-env/ 2>/dev/null || echo "New instance."
+          pip install websockets==12.0 requests
+          sudo apt-get update
+          sudo apt-get install -y prlimit steamcmd
 
-      - name: Install Dependencies
+      - name: Install Cloudflared & Bore
         run: |
-          npm install ws
-          ls -la server.js || { echo "ERROR: server.js not found in repo root!"; exit 1; }
-
-      - name: Install Cloudflared
-        run: |
-          curl -sL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
-            -o cloudflared
-          chmod +x cloudflared && sudo mv cloudflared /usr/local/bin/cloudflared
-          cloudflared --version
-
-      - name: Setup Public Bore Client (TCP Tunnel)
-        run: |
-          SERVERNAME="${{ github.event.inputs.servername }}"
-          INSTANCE_ID="${{ github.event.inputs.instance_id }}"
-          USERNAME="${{ github.event.inputs.username }}"
-
-          # Install bore
-          BORE_VERSION="v0.5.1"
-          curl -sL "https://github.com/ekzhang/bore/releases/download/${BORE_VERSION}/bore-${BORE_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
-            -o bore.tar.gz
-          tar xzf bore.tar.gz
-          sudo mv bore /usr/local/bin/bore
-          chmod +x /usr/local/bin/bore
-
-          # Run bore connected to public bore.pub
-          echo "Starting bore tunnel..."
-          bore local 25565 --to bore.pub > /tmp/bore.log 2>&1 &
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared-linux-amd64.deb
           
-          # Wait and parse assigned port
-          sleep 5
-          cat /tmp/bore.log
-          
-          # Extract port from "listening at bore.pub:12345"
-          MC_PORT=$(grep -oP 'bore\.pub:\K\d+' /tmp/bore.log | head -1 || echo "")
-          
-          if [ -z "$MC_PORT" ]; then
-            echo "ERROR: Could not fetch assigned port from bore.pub"
-            exit 1
-          fi
+          wget -q https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz
+          tar -xzf bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz
+          sudo mv bore /usr/local/bin/
 
-          echo "Assigned MC port: ${MC_PORT}"
-          BORE_IP="bore.pub"
-
-          echo "BORE_IP=${BORE_IP}" >> $GITHUB_ENV
-          echo "MC_PORT=${MC_PORT}" >> $GITHUB_ENV
-          echo "CUSTOM_DOMAIN=${SERVERNAME}.astrocore.qzz.io" >> $GITHUB_ENV
-          echo "MC_CONNECT=${SERVERNAME}.astrocore.qzz.io" >> $GITHUB_ENV
-
-          # Keep-alive loop to prevent bore.pub idle timeout drops
-          (
-            while true; do
-              sleep 60
-              nc -z -w 2 bore.pub ${MC_PORT} >/dev/null 2>&1 || true
-            done
-          ) &
-
-      - name: Register Cloudflare SRV Record
+      - name: Start Multi-Tenant Daemon
         env:
-          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
-        run: |
-          SERVERNAME="${{ github.event.inputs.servername }}"
-          SRV_NAME="_minecraft._tcp.${SERVERNAME}"
-          SRV_FQDN="_minecraft._tcp.${SERVERNAME}.astrocore.qzz.io"
-
-          echo "Registering SRV: ${SERVERNAME}.astrocore.qzz.io → bore.pub:${MC_PORT}"
-
-          # Check for existing SRV
-          EXISTING=$(curl -s -X GET \
-            "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records?type=SRV&name=${SRV_FQDN}" \
-            -H "Authorization: Bearer ${CF_API_TOKEN}" \
-            -H "Content-Type: application/json")
-
-          RECORD_ID=$(echo "$EXISTING" | python3 -c "
-          import sys, json
-          r = json.load(sys.stdin)
-          results = r.get('result', [])
-          print(results[0]['id'] if results else '')
-          " 2>/dev/null || echo "")
-
-          SRV_DATA='{
-            "type": "SRV",
-            "name": "'"${SRV_NAME}"'",
-            "data": {
-              "service": "_minecraft",
-              "proto": "_tcp",
-              "name": "'"${SERVERNAME}"'",
-              "priority": 0,
-              "weight": 5,
-              "port": '"${MC_PORT}"',
-              "target": "bore.pub"
-            },
-            "ttl": 60
-          }'
-
-          if [ -n "$RECORD_ID" ]; then
-            curl -s -X PUT \
-              "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${RECORD_ID}" \
-              -H "Authorization: Bearer ${CF_API_TOKEN}" \
-              -H "Content-Type: application/json" \
-              --data "${SRV_DATA}" | python3 -c "import sys,json; r=json.load(sys.stdin); print('SRV updated!' if r.get('success') else 'Failed: '+str(r.get('errors',[])))"
-          else
-            curl -s -X POST \
-              "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records" \
-              -H "Authorization: Bearer ${CF_API_TOKEN}" \
-              -H "Content-Type: application/json" \
-              --data "${SRV_DATA}" | python3 -c "import sys,json; r=json.load(sys.stdin); print('SRV created!' if r.get('success') else 'Failed: '+str(r.get('errors',[])))"
-          fi
-
-          echo "Players connect to: ${SERVERNAME}.astrocore.qzz.io"
-
-      - name: Ensure Server Properties
-        run: |
-          cd server-env
-          if [ ! -f "server.properties" ]; then
-            cat > server.properties << 'EOF'
-          online-mode=true
-          server-port=25565
-          EOF
-          fi
-
-      - name: Start Cloudflared Tunnel & Write Session
-        run: |
-          cloudflared tunnel --url http://localhost:8080 --no-autoupdate --no-chunked-encoding > /tmp/cf_ws.txt 2>&1 &
-
-          echo "Waiting for Cloudflared..."
-          CF_URL=""
-          for i in $(seq 1 90); do
-            sleep 1
-            CF_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cf_ws.txt | head -1)
-            [ -n "$CF_URL" ] && break
-          done
-
-          [ -z "$CF_URL" ] && { echo "=== cloudflared failed ===" && cat /tmp/cf_ws.txt && exit 1; }
-
-          echo "=============================================="
-          echo "  Players connect to: ${MC_CONNECT}"
-          echo "  Console WebSocket:  ${CF_URL}"
-          echo "  Bore tunnel:        ${BORE_IP}:${MC_PORT}"
-          echo "=============================================="
-
-          # Write session file
-          git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git session_repo
-          SESSION_FILE="session_repo/session/${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}.json"
-          mkdir -p session_repo/session
-          echo "{\"ws\":\"${CF_URL}\",\"status\":\"online\",\"ip\":\"${MC_CONNECT}\",\"updated\":$(date +%s)}" > "${SESSION_FILE}"
-          cd session_repo
-          git config user.name "Absora Engine" && git config user.email "engine@absora.com"
-          git add "session/${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}.json"
-          git commit -m "Session online: ${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}" || true
-          for attempt in 1 2 3; do
-            git pull --rebase origin main &&
-            git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git HEAD:main && break
-            sleep 3
-          done
-          cd ..
-
-      - name: Ignite Server
-        run: |
-          cp server.js server-env/server.js
-          cp -r node_modules server-env/node_modules
-          cd server-env
-          node server.js \
-            "${{ github.event.inputs.username }}" \
-            "${{ github.event.inputs.ram }}" \
-            "${{ github.event.inputs.software }}" \
-            "${{ github.event.inputs.version }}" \
-            "${{ github.event.inputs.servername }}"
-
-      - name: Save & Relay Protocol
-        if: always()
-        run: |
-          # Mark session offline
-          if [ -d "session_repo" ]; then
-            cd session_repo
-          else
-            git clone https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git session_repo
-            cd session_repo
-          fi
-          mkdir -p session
-          echo "{\"ws\":\"\",\"status\":\"offline\",\"updated\":$(date +%s)}" \
-            > "session/${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}.json"
-          git config user.name "Absora Engine"
-          git config user.email "engine@absora.com"
-          git add "session/${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}.json"
-          git commit -m "Session offline: ${{ github.event.inputs.username }}-${{ github.event.inputs.instance_id }}" || true
-          for attempt in 1 2 3; do
-            git pull --rebase origin main &&
-            git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-launch.git HEAD:main && break
-            sleep 3
-          done
-          cd ..
-
-          # Save server files
-          TARGET_DIR="storage_repo/${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }}"
-          mkdir -p "$TARGET_DIR"
-          rsync -av \
-            --exclude='storage_repo' --exclude='session_repo' \
-            --exclude='relay.flag' --exclude='*.pid' --exclude='*.log' \
-            server-env/ "$TARGET_DIR/"
-
-          cd storage_repo
-          git config user.name "Absora Relay Engine"
-          git config user.email "relay@absora.com"
-          git add .
-          git commit -m "Save: ${{ github.event.inputs.username }}/instance_${{ github.event.inputs.instance_id }} @ $(date -u '+%Y-%m-%d %H:%M UTC')" || echo "No changes."
-          for attempt in 1 2 3; do
-            git pull --rebase origin main && \
-            git push https://${{ secrets.ABSORA_PAT }}@github.com/AADI-playz23/mc-disk2.git HEAD:main && break
-            sleep 5
-          done
-
-      - name: Trigger Next Relay
-        if: always()
-        run: |
-          if [ -f "server-env/relay.flag" ]; then
-            echo "Relay flag detected -- dispatching next runner..."
-            curl -s -X POST \
-              -H "Accept: application/vnd.github.v3+json" \
-              -H "Authorization: Bearer ${{ secrets.ABSORA_PAT }}" \
-              -H "Content-Type: application/json" \
-              https://api.github.com/repos/AADI-playz23/mc-launch/actions/workflows/host.yml/dispatches \
-              -d "$(printf '{"ref":"main","inputs":{"username":"%s","instance_id":"%s","ram":"%s","java":"%s","software":"%s","version":"%s","servername":"%s"}}' \
-                '${{ github.event.inputs.username }}' \
-                '${{ github.event.inputs.instance_id }}' \
-                '${{ github.event.inputs.ram }}' \
-                '${{ github.event.inputs.java }}' \
-                '${{ github.event.inputs.software }}' \
-                '${{ github.event.inputs.version }}' \
-                '${{ github.event.inputs.servername }}')"
-            echo "Next relay dispatched."
-          fi
+          BASE_URL: "https://absoracloud-v2.vercel.app" # Replace with your actual Vercel URL
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+        run: python runner/daemon.py
