@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AbsoraCloud | Orbital Console</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+    <style>
+        body { margin: 0; background: #05050a; color: white; font-family: sans-serif; display: flex; flex-direction: column; height: 100vh; }
+        #header { padding: 1rem; background: #13131f; border-bottom: 1px solid #2d2d3f; display: flex; justify-content: space-between; align-items: center; }
+        #terminal-container { flex: 1; padding: 1rem; background: black; }
+        .status-badge { padding: 0.25rem 0.75rem; border-radius: 99px; font-size: 0.8rem; font-weight: bold; }
+        .queued { background: #f59e0b20; color: #f59e0b; border: 1px solid #f59e0b; }
+        .connected { background: #10b98120; color: #10b981; border: 1px solid #10b981; }
+        .btn { padding: 0.5rem 1rem; background: #8b5cf6; color: white; border: none; border-radius: 6px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h2 style="margin: 0; font-size: 1.2rem;">Server Console</h2>
+        <div>
+            <span id="status" class="status-badge queued">Initializing...</span>
+            <button class="btn" style="margin-left: 1rem; background: #06b6d4;" onclick="renewServer()">Renew Time</button>
+            <button class="btn" style="margin-left: 1rem;" onclick="location.href='dashboard.html'">Back to Dashboard</button>
+        </div>
+    </div>
+    <div id="terminal-container"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+    
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const instanceId = urlParams.get('id');
+        let term, ws;
+
+        // Initialize Xterm.js
+        term = new Terminal({ theme: { background: '#000000' }, convertEol: true });
+        const fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+        term.open(document.getElementById('terminal-container'));
+        fitAddon.fit();
+        window.addEventListener('resize', () => fitAddon.fit());
+
+        term.writeln('\x1b[1;36m[AbsoraCloud]\x1b[0m Requesting orbital compute resources...');
+
+        let currentSessionId = null;
+
+        async function bootServer() {
+            try {
+                // Dispatch request
+                const res = await fetch('/api/dispatch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ instance_id: instanceId })
+                });
+                const data = await res.json();
+
+                if (data.status === 'success') {
+                    // Assigned immediately
+                    currentSessionId = data.session_id;
+                    connectWebSocket(data.worker_url, data.session_id);
+                } else if (data.status === 'queued') {
+                    // Queued, waiting for runner
+                    currentSessionId = data.session_id;
+                    term.writeln('\x1b[1;33m[Queue]\x1b[0m VM limit reached. A new runner is booting. Please wait...');
+                    pollStatus(data.session_id);
+                } else {
+                    term.writeln(`\x1b[1;31m[Error]\x1b[0m ${data.message}`);
+                }
+            } catch (e) {
+                term.writeln('\x1b[1;31m[System Error]\x1b[0m Failed to contact API.');
+            }
+        }
+
+        async function renewServer() {
+            if (!currentSessionId) return alert('Session not initialized yet.');
+            try {
+                const res = await fetch('/api/renew', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session_id: currentSessionId })
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    const d = new Date(data.expires_at * 1000);
+                    term.writeln(`\n\x1b[1;32m[System]\x1b[0m Server successfully renewed! Expires at: ${d.toLocaleTimeString()}`);
+                } else {
+                    term.writeln(`\n\x1b[1;31m[System]\x1b[0m Renewal failed: ${data.message}`);
+                }
+            } catch (e) {
+                term.writeln('\n\x1b[1;31m[System]\x1b[0m Failed to contact renewal API.');
+            }
+        }
+
+        async function pollStatus(sessionId) {
+            const interval = setInterval(async () => {
+                const res = await fetch(`/api/status?session_id=${sessionId}`);
+                const data = await res.json();
+                
+                if (data.status === 'assigned') {
+                    clearInterval(interval);
+                    term.writeln('\x1b[1;32m[System]\x1b[0m Runner assigned. Connecting tunnel...');
+                    connectWebSocket(data.worker_url, sessionId);
+                }
+            }, 5000);
+        }
+
+        function connectWebSocket(workerUrl, sessionId) {
+            ws = new WebSocket(workerUrl);
+            const statusEl = document.getElementById('status');
+
+            ws.onopen = () => {
+                statusEl.className = 'status-badge connected';
+                statusEl.innerText = 'Connected';
+                // Auth the WS connection
+                ws.send(JSON.stringify({ session_id: sessionId }));
+            };
+
+            ws.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                if (msg.type === 'message') {
+                    term.write(msg.data);
+                } else if (msg.type === 'error') {
+                    term.writeln(`\x1b[1;31m[Runner Error]\x1b[0m ${msg.message}`);
+                }
+            };
+
+            ws.onclose = () => {
+                statusEl.className = 'status-badge queued';
+                statusEl.innerText = 'Disconnected';
+                term.writeln('\n\x1b[1;31m[System]\x1b[0m Connection lost.');
+            };
+
+            // Handle user input
+            let inputBuffer = '';
+            term.onData(e => {
+                if (e === '\r') {
+                    term.write('\r\n');
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: 'command', command: inputBuffer }));
+                    }
+                    inputBuffer = '';
+                } else if (e === '\u007F') { // Backspace
+                    if (inputBuffer.length > 0) {
+                        inputBuffer = inputBuffer.substr(0, inputBuffer.length - 1);
+                        term.write('\b \b');
+                    }
+                } else {
+                    inputBuffer += e;
+                    term.write(e);
+                }
+            });
+        }
+
+        if (!instanceId) {
+            term.writeln('\x1b[1;31m[Error]\x1b[0m No Instance ID provided.');
+        } else {
+            bootServer();
+        }
+    </script>
+</body>
+</html>

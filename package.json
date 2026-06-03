@@ -1,0 +1,14 @@
+{
+  "name": "absoracloud-v2",
+  "version": "1.0.0",
+  "description": "AbsoraCloud Vercel API with Cloudflare D1",
+  "scripts": {
+    "dev": "vercel dev"
+  },
+  "dependencies": {
+    "@vercel/kv": "^3.0.0",
+    "bcryptjs": "^2.4.3",
+    "cookie": "^0.6.0",
+    "jsonwebtoken": "^9.0.2"
+  }
+}

@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AbsoraCloud | Next-Gen Cloud</title>
+    <style>
+        :root {
+            --bg-main: #05050a;
+            --bg-panel: #13131f;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent: #8b5cf6;
+            --accent-glow: #06b6d4;
+            --success: #10b981;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --border: #2d2d3f;
+        }
+
+        body {
+            margin: 0;
+            font-family: 'Inter', system-ui, sans-serif;
+            background-color: var(--bg-main);
+            background-image: radial-gradient(circle at top, #1a1a2e 0%, transparent 50%);
+            color: var(--text-main);
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+
+        nav {
+            background-color: rgba(19, 19, 31, 0.8);
+            backdrop-filter: blur(10px);
+            padding: 1rem 2.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        nav h1 {
+            margin: 0;
+            font-size: 1.5rem;
+            background: linear-gradient(to right, var(--accent), var(--accent-glow));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            cursor: pointer;
+            letter-spacing: -0.5px;
+        }
+
+        .nav-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .nav-btn:hover {
+            color: var(--text-main);
+        }
+
+        .page {
+            display: none;
+            flex: 1;
+            padding: 2rem;
+            align-items: center;
+            flex-direction: column;
+        }
+
+        .page.active {
+            display: flex;
+            animation: fadeIn 0.4s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .panel {
+            background-color: var(--bg-panel);
+            padding: 2.5rem;
+            border-radius: 16px;
+            width: 100%;
+            max-width: 420px;
+            border: 1px solid var(--border);
+            box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.7);
+            text-align: center;
+        }
+
+        .panel-wide {
+            max-width: 1000px;
+            width: 100%;
+        }
+
+        h2 {
+            margin-top: 0;
+            font-size: 2.2rem;
+            font-weight: 700;
+            letter-spacing: -1px;
+        }
+
+        input,
+        select {
+            width: 100%;
+            padding: 0.85rem;
+            margin-bottom: 1.2rem;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background-color: #0b0b12;
+            color: var(--text-main);
+            box-sizing: border-box;
+            font-size: 1rem;
+            transition: all 0.2s;
+        }
+
+        input:focus,
+        select:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 10px rgba(139, 92, 246, 0.2);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 0.85rem;
+            background: linear-gradient(135deg, var(--accent), #6d28d9);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+
+        .btn:hover {
+            box-shadow: 0 0 15px rgba(139, 92, 246, 0.4);
+            transform: translateY(-1px);
+        }
+
+        .btn:disabled {
+            background: #334155;
+            cursor: not-allowed;
+            color: #94a3b8;
+            box-shadow: none;
+            transform: none;
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, var(--success), #059669);
+        }
+
+        .pricing-grid {
+            display: flex;
+            gap: 1.5rem;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-top: 2rem;
+        }
+
+        .plan-card {
+            background: #0b0b12;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 2.5rem 2rem;
+            width: 260px;
+            text-align: left;
+            transition: transform 0.2s, box-shadow 0.2s;
+            position: relative;
+        }
+
+        .plan-card:hover {
+            transform: translateY(-5px);
+            border-color: var(--accent);
+            box-shadow: 0 10px 30px -10px rgba(139, 92, 246, 0.2);
+        }
+
+        .plan-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin: 0;
+            color: var(--text-main);
+        }
+
+        .plan-price {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--text-main);
+            margin: 1rem 0;
+        }
+
+        .plan-price span {
+            font-size: 1rem;
+            color: var(--text-muted);
+            font-weight: normal;
+        }
+
+        .plan-features {
+            list-style: none;
+            padding: 0;
+            margin: 0 0 2rem 0;
+            color: var(--text-muted);
+            line-height: 2.2;
+            font-size: 0.95rem;
+        }
+
+        .plan-features li::before {
+            content: '✓';
+            color: var(--accent-glow);
+            margin-right: 10px;
+            font-weight: bold;
+        }
+
+        .plan-card.featured {
+            border-color: var(--accent);
+            box-shadow: 0 0 20px -5px rgba(139, 92, 246, 0.3);
+            overflow: hidden;
+        }
+
+        .plan-card.featured::before {
+            content: 'BEST VALUE';
+            position: absolute;
+            top: 18px;
+            right: -35px;
+            background: linear-gradient(to right, var(--accent), var(--accent-glow));
+            color: white;
+            font-size: 0.7rem;
+            font-weight: bold;
+            padding: 5px 40px;
+            transform: rotate(45deg);
+            letter-spacing: 1px;
+        }
+    </style>
+</head>
+
+<body>
+    <nav>
+        <h1 onclick="goTo('landing')">AbsoraCloud</h1>
+        <div id="nav-actions">
+            <button class="nav-btn" onclick="goTo('pricing')" style="margin-right: 1.5rem;">Plans & Pricing</button>
+            <button class="nav-btn" onclick="goTo('pay')" style="margin-right: 1.5rem; color: var(--success);">Pay via
+                UPI</button>
+            <button class="nav-btn" onclick="goTo('login')">Launch Console</button>
+        </div>
+    </nav>
+
+    <section id="landing" class="page active">
+        <div class="panel panel-wide" style="margin-top: 8vh; background: transparent; border: none; box-shadow: none;">
+            <h2 style="font-size: 3.5rem; margin-bottom: 1rem; line-height: 1.1;">Ascend to the Cloud.</h2>
+            <p
+                style="color: var(--text-muted); font-size: 1.25rem; margin-bottom: 2.5rem; max-width: 600px; margin-left: auto; margin-right: auto;">
+                Ephemeral, high-performance engines running in isolated orbital containers. Secure tunnels.
+                Zero compromises.</p>
+            <div style="display: flex; gap: 1rem; justify-content: center;">
+                <button class="btn" style="max-width: 200px; padding: 1rem;" onclick="goTo('login')">Initialize
+                    Engine</button>
+                <button class="btn"
+                    style="max-width: 200px; padding: 1rem; background: transparent; border: 1px solid var(--accent); color: var(--text-main);"
+                    onclick="goTo('pricing')">View Plans</button>
+            </div>
+        </div>
+    </section>
+
+    <section id="pricing" class="page">
+        <div class="panel panel-wide" style="background: transparent; border: none; box-shadow: none; padding-top: 0;">
+            <h2 style="font-size: 2.5rem; margin-bottom: 0.5rem;">Absora Compute Plans</h2>
+            <p style="color: var(--text-muted); font-size: 1.1rem; margin-bottom: 3rem;">High-performance isolated
+                environments for any community size.</p>
+            <div class="pricing-grid">
+                <div class="plan-card">
+                    <h3 class="plan-title">Free Trial</h3>
+                    <div class="plan-price">₹0<span>/12 hrs</span></div>
+                    <ul class="plan-features">
+                        <li>1 vCPU Core</li>
+                        <li>4GB DDR4 RAM</li>
+                        <li>12 Hours Runtime</li>
+                        <li>Custom Subdomain</li>
+                    </ul><button class="btn" style="background: transparent; border: 1px solid var(--border);"
+                        onclick="goTo('login')">Start Free Trial</button>
+                </div>
+                <div class="plan-card">
+                    <h3 class="plan-title">Starter Orbit</h3>
+                    <div class="plan-price">₹20<span>/mo</span></div>
+                    <ul class="plan-features">
+                        <li>1 vCPU Core</li>
+                        <li>4GB DDR4 RAM</li>
+                        <li>Unlimited (6h Renew)</li>
+                        <li>Standard Support</li>
+                    </ul><button class="btn" style="background: transparent; border: 1px solid var(--border);"
+                        onclick="goTo('pay')">Subscribe Now</button>
+                </div>
+                <div class="plan-card featured">
+                    <h3 class="plan-title">Advanced Core</h3>
+                    <div class="plan-price">₹45<span>/mo</span></div>
+                    <ul class="plan-features">
+                        <li>2 vCPU Cores</li>
+                        <li>6GB DDR4 RAM</li>
+                        <li>2 Server Slots</li>
+                        <li>Priority Support</li>
+                    </ul><button class="btn" onclick="goTo('pay')">Subscribe Now</button>
+                </div>
+                <div class="plan-card">
+                    <h3 class="plan-title">Extreme Nexus</h3>
+                    <div class="plan-price">₹90<span>/mo</span></div>
+                    <ul class="plan-features">
+                        <li>4 vCPU Cores</li>
+                        <li>8GB DDR4 RAM</li>
+                        <li>3 Server Slots</li>
+                        <li>Priority Support</li>
+                    </ul><button class="btn" style="background: transparent; border: 1px solid var(--border);"
+                        onclick="goTo('pay')">Subscribe Now</button>
+                </div>
+                <div class="plan-card">
+                    <h3 class="plan-title">Quantum Server</h3>
+                    <div class="plan-price">₹150<span>/mo</span></div>
+                    <ul class="plan-features">
+                        <li>8 vCPU Cores</li>
+                        <li>16GB Fast RAM</li>
+                        <li>4 Server Slots</li>
+                        <li>24/7 Support</li>
+                    </ul><button class="btn" style="background: transparent; border: 1px solid var(--border);"
+                        onclick="goTo('pay')">Subscribe Now</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="pay" class="page">
+        <div class="panel" style="margin-top: 5vh; max-width: 500px;">
+            <h2>Manual UPI Upgrade</h2>
+            <p style="color: var(--text-muted); margin-bottom: 2rem;">Send your payment to the ID below. Your server
+                will be automatically unlocked for 30 days.</p>
+            <div
+                style="background: rgba(0,0,0,0.4); padding: 1.5rem; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 1.5rem;">
+                <h3
+                    style="color: var(--accent-glow); font-family: monospace; font-size: 1.4rem; margin: 0 0 0.5rem 0; letter-spacing: 1px;">
+                    yourupi@ybl</h3>
+                <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0;">Send exact plan amount via UPI</p>
+            </div>
+            <div style="text-align: left;"><label
+                    style="display:block; color:var(--text-muted); font-size:0.85rem; font-weight:bold; margin-bottom:0.5rem;">Your
+                    Absora Username</label><input type="text" id="payment-account-user" placeholder="Enter username"
+                    required></div>
+            <select id="payment-plan" style="margin-bottom: 1.5rem;">
+                <option value="starter">Starter Orbit (₹20/mo)</option>
+                <option value="advanced">Advanced Core (₹45/mo)</option>
+                <option value="nexus">Extreme Nexus (₹90/mo)</option>
+                <option value="quantum">Quantum Server (₹150/mo)</option>
+            </select>
+            <div
+                style="border: 1px dashed var(--accent); padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem; background: rgba(139, 92, 246, 0.05);">
+                <label
+                    style="display:block; color:var(--text-muted); font-size:0.85rem; font-weight:bold; margin-bottom:0.5rem;">Upload
+                    Payment Screenshot</label><input type="file" id="payment-screenshot" accept="image/png, image/jpeg"
+                    style="margin-bottom: 0; padding: 0.5rem; background: transparent; border: none;"></div>
+            <button class="btn btn-success" id="btn-submit-payment" onclick="submitPayment()">Submit for
+                Upgrade</button>
+            <p id="payment-msg" style="margin-top: 1rem; display: none; font-weight: 600;"></p>
+        </div>
+    </section>
+
+    <section id="login" class="page">
+        <div class="panel" style="margin-top: 5vh;">
+            <h2>Orbit Access</h2>
+            <div style="display: flex; gap: 10px; margin-bottom: 1rem;">
+                <button class="btn" style="flex:1" onclick="setMode('login')">Sign In</button>
+                <button class="btn" style="flex:1; background: transparent; border: 1px solid var(--border);" onclick="setMode('register')">Register</button>
+            </div>
+            <p id="auth-msg" style="color: var(--text-muted); margin-bottom: 2rem;">Auto-registration enabled.</p>
+            <form onsubmit="handleAuth(event)">
+                <input type="text" id="username" placeholder="Pilot Username" required>
+                <input type="password" id="password" placeholder="Passcode" required>
+                <button type="submit" id="login-btn" class="btn">Authenticate</button>
+            </form>
+        </div>
+    </section>
+
+    <script>
+        let mode = 'login';
+        window.addEventListener('DOMContentLoaded', () => {
+            if (localStorage.getItem('absora_user')) { window.location.href = 'dashboard.html'; }
+        });
+
+        function goTo(pageId) {
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.getElementById(pageId).classList.add('active');
+        }
+
+        function setMode(newMode) {
+            mode = newMode;
+            document.getElementById('login-btn').innerText = mode === 'login' ? 'Authenticate' : 'Register Pilot';
+            document.getElementById('auth-msg').innerText = mode === 'login' ? 'Welcome back.' : 'Create your Absora account.';
+        }
+
+        async function handleAuth(e) {
+            e.preventDefault(); 
+            const user = document.getElementById('username').value.trim().toLowerCase(); 
+            const pass = document.getElementById('password').value;
+            const msgBox = document.getElementById('auth-msg'); 
+            const btn = document.getElementById('login-btn');
+            
+            btn.disabled = true; 
+            btn.innerText = "Encrypting Handshake..."; 
+            msgBox.style.color = "var(--text-muted)";
+            
+            try {
+                const response = await fetch('/api/auth', { 
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ op: mode, username: user, password: pass })
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    if (mode === 'register') {
+                        msgBox.innerText = "Registration complete. You can now login.";
+                        msgBox.style.color = "var(--success)";
+                        setMode('login');
+                        btn.disabled = false;
+                        btn.innerText = "Authenticate";
+                    } else {
+                        localStorage.setItem('absora_user', user);
+                        localStorage.setItem('absora_plan', data.user.plan || "free");
+                        window.location.href = 'dashboard.html';
+                    }
+                } else { 
+                    msgBox.innerText = data.message; 
+                    msgBox.style.color = "var(--danger)"; 
+                    btn.disabled = false; 
+                    btn.innerText = mode === 'login' ? "Authenticate" : "Register Pilot"; 
+                }
+            } catch (err) { 
+                msgBox.innerText = err.message || "Network error."; 
+                msgBox.style.color = "var(--danger)"; 
+                btn.disabled = false; 
+                btn.innerText = "Authenticate"; 
+            }
+        }
+
+        async function submitPayment() {
+            // (Placeholder for Vercel UPI API)
+            const msgBox = document.getElementById('payment-msg');
+            msgBox.style.display = 'block';
+            msgBox.style.color = 'var(--warning)';
+            msgBox.innerText = 'Payments module is currently offline pending Vercel migration.';
+        }
+    </script>
+</body>
+
+</html>
