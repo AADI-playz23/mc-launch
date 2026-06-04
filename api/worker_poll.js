@@ -16,7 +16,7 @@ export default async function handler(req, res) {
   try {
     // 1. Check for tasks already explicitly assigned to this VM by dispatch
     const assignedSessions = await queryD1(
-      `SELECT s.*, i.servername, i.game, i.software, i.version, i.ram, u.plan 
+      `SELECT s.*, i.servername, i.game, i.software, i.version, i.java_version, i.ram, u.plan 
        FROM sessions s 
        JOIN instances i ON s.instance_id = i.instance_id 
        JOIN users u ON s.username = u.username
@@ -36,7 +36,7 @@ export default async function handler(req, res) {
         const free_cpu = 4 - (vm.used_cpu || 0);  // MAX 4 Cores
 
         const queuedSessions = await queryD1(
-          `SELECT s.*, i.servername, i.game, i.software, i.version, i.ram, u.plan 
+          `SELECT s.*, i.servername, i.game, i.software, i.version, i.java_version, i.ram, u.plan 
            FROM sessions s 
            JOIN instances i ON s.instance_id = i.instance_id 
            JOIN users u ON s.username = u.username

@@ -37,12 +37,18 @@ async function initSchema() {
             game TEXT DEFAULT 'minecraft',
             software TEXT,
             version TEXT,
+            java_version TEXT DEFAULT '21',
             ram TEXT DEFAULT '4G',
             status TEXT DEFAULT 'offline',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
           )
         `);
         console.log("✓ instances table");
+        
+        try {
+            await executeD1(`ALTER TABLE instances ADD COLUMN java_version TEXT DEFAULT '21'`);
+            console.log("✓ added java_version to existing instances table");
+        } catch(e) {}
 
         await executeD1(`
           CREATE TABLE IF NOT EXISTS vms (

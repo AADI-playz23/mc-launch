@@ -148,6 +148,13 @@
                             <option value="latest">Loading...</option>
                         </select>
 
+                        <label class="label">Java Version</label>
+                        <select id="j-${i}">
+                            <option value="21">Java 21 (Minecraft 1.20.5+)</option>
+                            <option value="17">Java 17 (Minecraft 1.17 - 1.20.4)</option>
+                            <option value="8">Java 8 (Minecraft 1.16.5 and older)</option>
+                        </select>
+
                         <button class="btn btn-p" onclick="setup(${i})" style="margin-top:0.5rem;">Provision Node</button>
                     </div>`;
             }
@@ -204,7 +211,8 @@
                 servername: name,
                 game: document.getElementById(`g-${id}`).value,
                 software: document.getElementById(`s-${id}`).value,
-                version: document.getElementById(`v-${id}`).value
+                version: document.getElementById(`v-${id}`).value,
+                java_version: document.getElementById(`j-${id}`).value
             };
 
             try {

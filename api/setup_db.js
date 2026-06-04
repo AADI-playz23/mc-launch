@@ -37,7 +37,9 @@ export default async function handler(req, res) {
       game TEXT NOT NULL,
       software TEXT NOT NULL,
       version TEXT NOT NULL,
+      java_version TEXT DEFAULT '21',
       ram TEXT NOT NULL,
+      status TEXT DEFAULT 'offline',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (username) REFERENCES users(username)
     )`,
@@ -84,6 +86,11 @@ export default async function handler(req, res) {
     for (const sql of queries) {
       await executeD1(sql);
     }
+    
+    try {
+        await executeD1(`ALTER TABLE instances ADD COLUMN java_version TEXT DEFAULT '21'`);
+    } catch(e) {}
+    
     return sendSuccess(res, { message: 'Database schema created/updated successfully' });
   } catch (error) {
     console.error('Setup DB Error:', error);

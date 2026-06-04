@@ -130,6 +130,7 @@
         </div>
         <a class="nav-item active" onclick="switchPage('console')"><i class="fa-solid fa-terminal"></i> <span>Console</span></a>
         <a class="nav-item" onclick="switchPage('files')"><i class="fa-solid fa-folder"></i> <span>File Manager</span></a>
+        <a class="nav-item" onclick="switchPage('properties')"><i class="fa-solid fa-sliders"></i> <span>Properties</span></a>
         <a class="nav-item" onclick="switchPage('version')"><i class="fa-solid fa-code-branch"></i> <span>Software / Version</span></a>
         <a class="nav-item" onclick="switchPage('plugins')"><i class="fa-solid fa-puzzle-piece"></i> <span>Plugins</span></a>
         <a class="nav-item" onclick="switchPage('backups')"><i class="fa-solid fa-box-archive"></i> <span>Backups</span></a>
@@ -190,29 +191,46 @@
             </div>
         </div>
 
-        <div id="version-page" class="page">
+        <div id="version-page" class="page" style="padding: 2rem;">
+            <h2>Update Software</h2>
             <div class="panel" style="max-width: 600px;">
-                <h3>Change Software & Version</h3>
-                <p style="color: var(--warning); font-size: 0.9rem; margin-bottom: 1.5rem;">
-                    Warning: Changing the software will wipe your current server.jar. You must click Restart after.
-                </p>
-                <label>Software</label>
-                <select id="s-edit" onchange="loadEditVersions()">
+                <label style="display:block; margin-bottom:0.5rem; color:var(--text-muted);">Software</label>
+                <select id="v-software" onchange="loadVersions()">
                     <option value="paper">PaperMC</option>
                     <option value="fabric">Fabric</option>
                     <option value="forge">Forge</option>
-                    <option value="spigot">Spigot</option>
+                    <option value="high_performance">High Performance</option>
+                    <option value="hybrid">Hybrid</option>
+                    <option value="proxies">Proxies</option>
                     <option value="purpur">Purpur</option>
-                    <option value="bungeecord">BungeeCord</option>
-                    <option value="velocity">Velocity</option>
+                    <option value="quilt">Quilt</option>
+                    <option value="spigot">Spigot</option>
                 </select>
-                
-                <label>Version</label>
-                <select id="v-edit">
+
+                <label style="display:block; margin-top:1rem; margin-bottom:0.5rem; color:var(--text-muted);">Version</label>
+                <select id="v-version">
                     <option value="latest">Loading...</option>
                 </select>
                 
-                <button class="btn btn-primary" onclick="updateSoftware(event)">Update Server</button>
+                <label style="display:block; margin-top:1rem; margin-bottom:0.5rem; color:var(--text-muted);">Java Version</label>
+                <select id="v-java">
+                    <option value="21">Java 21 (Minecraft 1.20.5+)</option>
+                    <option value="17">Java 17 (Minecraft 1.17 - 1.20.4)</option>
+                    <option value="8">Java 8 (Minecraft 1.16.5 and older)</option>
+                </select>
+
+                <button class="btn btn-primary" onclick="updateSoftware()" style="margin-top:1.5rem;">Update Server Settings</button>
+                <p style="font-size:0.85rem; color:var(--danger); margin-top:1rem;">Note: You must restart the server for these changes to take effect.</p>
+            </div>
+        </div>
+
+        <div id="properties-page" class="page" style="padding: 2rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h2>Server Properties</h2>
+                <button class="btn btn-primary" style="width:auto;" onclick="saveProperties()"><i class="fa-solid fa-save"></i> Save</button>
+            </div>
+            <div class="panel" id="properties-form" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                <p>Loading properties...</p>
             </div>
         </div>
 
@@ -258,9 +276,7 @@
 
             if (pageId === 'console' && term) fitAddon.fit();
             if (pageId === 'files') loadFiles();
-            if (pageId === 'version') {
-                if (document.getElementById('v-edit').options.length <= 1) loadEditVersions();
-            }
+            if (pageId === 'properties') loadProperties();
         }
 
         term = new Terminal({ theme: { background: '#000000' }, convertEol: true });
@@ -281,10 +297,27 @@
                     const inst = data.instances.find(i => i.instance_id == instanceId);
                     if (inst) {
                         document.getElementById('server-title').innerText = inst.servername;
-                        document.getElementById('s-edit').value = inst.software;
                     }
                 }
             });
+
+        async function updateSoftware() {
+            const software = document.getElementById('v-software').value;
+            const version = document.getElementById('v-version').value;
+            const java_version = document.getElementById('v-java').value;
+            
+            try {
+                const res = await fetch('/api/instances', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ instance_id: parseInt(instanceId), software, version, java_version })
+                });
+                const data = await res.json();
+                alert(data.message || data.error);
+            } catch(e) {
+                alert("Failed to update settings.");
+            }
+        }
 
         async function bootServer(force = false) {
             try {
@@ -334,6 +367,7 @@
                 statusEl.innerText = 'Connected';
                 ws.send(JSON.stringify({ session_id: sessionId }));
                 loadFiles(); 
+                setupPropertiesHook();
             };
 
             ws.onmessage = (event) => {
@@ -558,6 +592,113 @@
 
         if (instanceId) bootServer();
         else term.writeln('\x1b[1;31m[Error]\x1b[0m No Instance ID provided.');
+        // ==========================================
+        // Properties Editing
+        // ==========================================
+        let propertiesMap = {};
+
+        function loadProperties() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                document.getElementById('properties-form').innerHTML = '<p>Server is offline. Start the server to edit properties.</p>';
+                return;
+            }
+            ws.send(JSON.stringify({ type: 'read_file', path: 'server.properties' }));
+        }
+
+        function parseProperties(content) {
+            propertiesMap = {};
+            const lines = content.split('\n');
+            const form = document.getElementById('properties-form');
+            form.innerHTML = '';
+            
+            lines.forEach(line => {
+                line = line.trim();
+                if (!line || line.startsWith('#')) return;
+                
+                const parts = line.split('=');
+                if (parts.length >= 2) {
+                    const key = parts[0];
+                    const val = parts.slice(1).join('=');
+                    propertiesMap[key] = val;
+                    
+                    const wrap = document.createElement('div');
+                    wrap.style.display = 'flex';
+                    wrap.style.flexDirection = 'column';
+                    
+                    const label = document.createElement('label');
+                    label.innerText = key;
+                    label.style.fontSize = '0.8rem';
+                    label.style.color = 'var(--text-muted)';
+                    label.style.marginBottom = '0.25rem';
+                    
+                    let input;
+                    if (val === 'true' || val === 'false') {
+                        input = document.createElement('select');
+                        input.innerHTML = `<option value="true" ${val==='true'?'selected':''}>true</option><option value="false" ${val==='false'?'selected':''}>false</option>`;
+                    } else {
+                        input = document.createElement('input');
+                        input.type = 'text';
+                        input.value = val;
+                    }
+                    input.id = `prop-${key}`;
+                    
+                    wrap.appendChild(label);
+                    wrap.appendChild(input);
+                    form.appendChild(wrap);
+                }
+            });
+            if (Object.keys(propertiesMap).length === 0) {
+                form.innerHTML = '<p>No properties found. Has the server booted up at least once?</p>';
+            }
+        }
+
+        function saveProperties() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return alert("WebSocket not connected.");
+            
+            let newContent = "#Minecraft server properties\n";
+            for (const key in propertiesMap) {
+                const el = document.getElementById(`prop-${key}`);
+                if (el) {
+                    newContent += `${key}=${el.value}\n`;
+                } else {
+                    newContent += `${key}=${propertiesMap[key]}\n`;
+                }
+            }
+            
+            ws.send(JSON.stringify({
+                type: 'write_file',
+                path: 'server.properties',
+                content: newContent
+            }));
+            
+            alert("Properties saved! Restart the server to apply.");
+        }
+
+        const originalSwitchPage = switchPage;
+        window.switchPage = function(pageId) {
+            originalSwitchPage(pageId);
+            if (pageId === 'properties') {
+                loadProperties();
+            }
+        };
+
+        // Hook into WebSocket message handler for properties
+        const oldOnMessage = ws ? ws.onmessage : null;
+        function setupPropertiesHook() {
+            if (!ws) return;
+            const existing = ws.onmessage;
+            ws.onmessage = (e) => {
+                const msg = JSON.parse(e.data);
+                if (msg.type === 'file_content' && document.getElementById('properties-page').classList.contains('active')) {
+                    if (msg.content) {
+                        parseProperties(msg.content);
+                    } else {
+                        document.getElementById('properties-form').innerHTML = '<p>Failed to load server.properties. Server might not have generated it yet.</p>';
+                    }
+                }
+                if (existing) existing(e);
+            };
+        }
     </script>
 </body>
 </html>

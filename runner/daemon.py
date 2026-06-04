@@ -21,6 +21,7 @@ API_URL = BASE_URL + "/api/worker_api"
 POLL_URL = BASE_URL + "/api/worker_poll"
 RUNNER_ID = os.environ.get("RUNNER_ID", f"runner_{os.urandom(4).hex()}")
 WORKER_SECRET = os.environ.get("WORKER_SECRET", "")
+ABSORA_PAT = os.environ.get("ABSORA_PAT", "")
 PORT = 8080
 
 CF_API_TOKEN = os.environ.get("CLOUDFLARE_API_TOKEN", "")
@@ -110,6 +111,83 @@ def api_call(url, payload):
     except Exception as e:
         print(f"API Error ({url}): {e}")
         return {"status": "error"}
+
+# ── Persistence (mc-disk2) ──
+
+def download_server_data(username, instance_id, server_dir):
+    print(f"[{instance_id}] Fetching persistence from mc-disk2...")
+    repo_dir = f"/home/runner/backups/mc-disk2_{instance_id}"
+    if os.path.exists(repo_dir):
+        shutil.rmtree(repo_dir, ignore_errors=True)
+    
+    try:
+        if not ABSORA_PAT:
+            print("No ABSORA_PAT set, skipping persistence.")
+            return
+
+        clone_cmd = [
+            "git", "clone", "--depth", "1",
+            f"https://x-access-token:{ABSORA_PAT}@github.com/AADI-playz23/mc-disk2.git",
+            repo_dir
+        ]
+        subprocess.run(clone_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        
+        tar_path = os.path.join(repo_dir, username, str(instance_id), "server.tar.gz")
+        if os.path.exists(tar_path):
+            print(f"[{instance_id}] Found existing backup. Extracting...")
+            subprocess.run(["tar", "-xzf", tar_path, "-C", server_dir])
+            print(f"[{instance_id}] Extraction complete.")
+        else:
+            print(f"[{instance_id}] No existing backup found. Starting fresh.")
+    except Exception as e:
+        print(f"[{instance_id}] Persistence download failed: {e}")
+    finally:
+        shutil.rmtree(repo_dir, ignore_errors=True)
+
+def upload_server_data(username, instance_id, server_dir):
+    print(f"[{instance_id}] Saving persistence to mc-disk2...")
+    repo_dir = f"/home/runner/backups/mc-disk2_{instance_id}_upload"
+    
+    try:
+        if not ABSORA_PAT:
+            return
+
+        # Compress server directory (exclude large/unnecessary files if needed)
+        tar_path = f"/home/runner/backups/server_{instance_id}.tar.gz"
+        subprocess.run(["tar", "-czf", tar_path, "-C", server_dir, "."])
+
+        # Clone repo
+        if os.path.exists(repo_dir):
+            shutil.rmtree(repo_dir, ignore_errors=True)
+        subprocess.run([
+            "git", "clone", "--depth", "1",
+            f"https://x-access-token:{ABSORA_PAT}@github.com/AADI-playz23/mc-disk2.git",
+            repo_dir
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        
+        # Move file into repo
+        target_dir = os.path.join(repo_dir, username, str(instance_id))
+        os.makedirs(target_dir, exist_ok=True)
+        shutil.copy(tar_path, os.path.join(target_dir, "server.tar.gz"))
+        
+        # Push
+        subprocess.run(["git", "config", "user.name", "AbsoraCloud Daemon"], cwd=repo_dir)
+        subprocess.run(["git", "config", "user.email", "daemon@absoracloud.com"], cwd=repo_dir)
+        subprocess.run(["git", "add", "."], cwd=repo_dir)
+        subprocess.run(["git", "commit", "-m", f"Automated backup for {username}_{instance_id}"], cwd=repo_dir)
+        push_res = subprocess.run(["git", "push"], cwd=repo_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        
+        if push_res.returncode == 0:
+            print(f"[{instance_id}] Persistence saved successfully.")
+        else:
+            print(f"[{instance_id}] Persistence push failed: {push_res.stderr.decode()}")
+
+    except Exception as e:
+        print(f"[{instance_id}] Persistence upload failed: {e}")
+    finally:
+        shutil.rmtree(repo_dir, ignore_errors=True)
+        if 'tar_path' in locals() and os.path.exists(tar_path):
+            os.remove(tar_path)
 
 
 # ── Heartbeat & Poll Loop ──
@@ -210,13 +288,10 @@ def stop_session(session_id, reason="manual"):
     # Force kill if still running
     try:
         if proc and proc.poll() is None:
-            proc.terminate()
+            subprocess.run(["docker", "rm", "-f", f"mc_{sess.get('instance_id')}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             proc.wait(timeout=5)
     except Exception:
-        try:
-            proc.kill()
-        except Exception:
-            pass
+        pass
 
     # Kill bore tunnel
     try:
@@ -241,6 +316,9 @@ def stop_session(session_id, reason="manual"):
 
     del active_sessions[session_id]
     print(f"[{session_id}] Session stopped. Reason: {reason}")
+    
+    # Save persistence
+    upload_server_data(sess.get("username"), sess.get("instance_id"), f"/home/runner/servers/server_{sess.get('instance_id')}")
 
 
 # ── Tunnel Management ──
@@ -331,6 +409,10 @@ def start_game_server(task):
 
     server_dir = f"/home/runner/servers/server_{instance_id}"
     os.makedirs(server_dir, exist_ok=True)
+    os.makedirs("/home/runner/backups", exist_ok=True)
+
+    # 1. Pull persistence
+    download_server_data(username, instance_id, server_dir)
 
     # Download the correct server JAR
     try:
@@ -439,10 +521,21 @@ def start_game_server(task):
     with open(f"{server_dir}/eula.txt", "w") as f:
         f.write("eula=true")
 
-    # Build Java command with Aikar's flags
+    # Build Docker command
+    java_version = task.get("java_version", "21")
+    image_name = f"eclipse-temurin:{java_version}-jre"
+    
     aikar_flags = get_aikars_flags(ram_mb)
     cmd = [
-        "prlimit", f"--as={ram_mb * 1024 * 1024}",
+        "docker", "run",
+        "-i", "--rm",
+        "--name", f"mc_{instance_id}",
+        "-p", f"{internal_port}:{internal_port}",
+        "-v", f"{server_dir}:/server",
+        "-w", "/server",
+        f"--memory={ram_mb}m",
+        f"--cpus={requested_cpu}",
+        image_name,
         "java",
     ] + aikar_flags + [
         f"-Dserver.port={internal_port}",
