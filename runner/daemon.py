@@ -394,7 +394,46 @@ def start_game_server(task):
 
     # Update Cloudflare SRV record if configured
     if CF_API_TOKEN and CF_ZONE_ID and remote_port:
-        print(f"[{session_id}] (Mock) Updating Cloudflare SRV {servername}.astrocore.qzz.io -> bore.pub:{remote_port}")
+        dns_servername = re.sub(r'[^a-zA-Z0-9-]', '', servername.lower().replace(' ', '-'))
+        print(f"[{session_id}] Updating Cloudflare SRV {dns_servername}.astrocore.qzz.io -> bore.pub:{remote_port}")
+        record_name = f"_minecraft._tcp.{dns_servername}"
+        headers = {
+            "Authorization": f"Bearer {CF_API_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        
+        try:
+            # 1. Search for existing SRV record
+            search_url = f"https://api.cloudflare.com/client/v4/zones/{CF_ZONE_ID}/dns_records?type=SRV&name={record_name}.astrocore.qzz.io"
+            search_res = requests.get(search_url, headers=headers).json()
+            
+            record_data = {
+                "type": "SRV",
+                "name": f"{record_name}.astrocore.qzz.io",
+                "data": {
+                    "service": "_minecraft",
+                    "proto": "_tcp",
+                    "name": f"{servername}.astrocore.qzz.io",
+                    "priority": 0,
+                    "weight": 5,
+                    "port": int(remote_port),
+                    "target": "bore.pub"
+                },
+                "ttl": 60
+            }
+            
+            if search_res.get("success") and len(search_res["result"]) > 0:
+                # Update existing
+                record_id = search_res["result"][0]["id"]
+                update_url = f"https://api.cloudflare.com/client/v4/zones/{CF_ZONE_ID}/dns_records/{record_id}"
+                requests.put(update_url, headers=headers, json=record_data)
+            else:
+                # Create new
+                create_url = f"https://api.cloudflare.com/client/v4/zones/{CF_ZONE_ID}/dns_records"
+                requests.post(create_url, headers=headers, json=record_data)
+                
+        except Exception as e:
+            print(f"[{session_id}] Failed to update Cloudflare SRV: {e}")
 
     # Accept EULA
     with open(f"{server_dir}/eula.txt", "w") as f:
@@ -482,6 +521,20 @@ async def handle_client(websocket):
 
         async def read_stdout():
             try:
+                # Announce the IP address directly into the web console!
+                if sess.get("remote_port"):
+                    dns_servername = re.sub(r'[^a-zA-Z0-9-]', '', sess.get('servername', 'play').lower().replace(' ', '-'))
+                    domain = f"{dns_servername}.astrocore.qzz.io"
+                    ip_msg = f"\r\n\x1b[1;32m[AbsoraCloud] Server is live! Join at IP: \x1b[1;37m\x1b[4m{domain}\x1b[0m\r\n\r\n"
+                    await websocket.send(json.dumps({"type": "message", "data": ip_msg}))
+                    
+                    # Also send structured data so the frontend UI can display it
+                    await websocket.send(json.dumps({
+                        "type": "server_ip", 
+                        "domain": domain, 
+                        "bore_port": sess['remote_port']
+                    }))
+                    
                 while proc.poll() is None and not shutting_down:
                     rlist, _, _ = select.select([master_fd], [], [], 0.1)
                     if rlist:

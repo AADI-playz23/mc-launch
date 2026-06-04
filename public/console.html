@@ -146,6 +146,11 @@
             </div>
             
             <div style="display: flex; gap: 1rem; align-items: center;">
+                <div id="ip-display" style="display: none; background: rgba(139, 92, 246, 0.1); border: 1px solid var(--accent); padding: 0.5rem 1rem; border-radius: 6px; font-size: 0.85rem; display: flex; flex-direction: column; align-items: flex-end; line-height: 1.2;">
+                    <span style="color: var(--text-muted); font-size: 0.75rem;">Server Address:</span>
+                    <strong style="color: var(--accent-glow);" id="ip-domain">...</strong>
+                    <span style="color: var(--text-muted); font-size: 0.75rem;" id="ip-bore">...</span>
+                </div>
                 <button class="btn btn-outline" onclick="renewServer()">Renew Time (12h)</button>
                 <div class="power-controls">
                     <button class="power-btn btn-start" onclick="sendPower('start')" title="Start"><i class="fa-solid fa-play"></i></button>
@@ -316,7 +321,7 @@
             }, 3000);
         }
 
-        function connectWebSocket(workerUrl, sessionId) {
+        function connectWebSocket(workerUrl, sessionId, retryCount = 0) {
             ws = new WebSocket(workerUrl);
             const statusEl = document.getElementById('status');
             const parts = workerUrl.split('//');
@@ -349,15 +354,25 @@
                     el.style.color = 'var(--danger)';
                 } else if (msg.type === 'file_delete_success') {
                     loadFiles(currentPath);
+                } else if (msg.type === 'server_ip') {
+                    const display = document.getElementById('ip-display');
+                    display.style.display = 'flex';
+                    document.getElementById('ip-domain').innerText = msg.domain;
+                    document.getElementById('ip-bore').innerText = `Node IP: bore.pub:${msg.bore_port}`;
                 } else if (msg.type === 'file_error') {
                     alert('File operation error: ' + msg.message);
                 }
             };
 
             ws.onclose = () => {
-                statusEl.className = 'status-badge status-offline';
-                statusEl.innerText = 'Offline';
-                term.writeln('\n\x1b[1;31m[System]\x1b[0m Connection lost.');
+                document.getElementById('ip-display').style.display = 'none';
+                if (retryCount < 10) {
+                    setTimeout(() => connectWebSocket(workerUrl, sessionId, retryCount + 1), 3000);
+                } else {
+                    statusEl.className = 'status-badge status-offline';
+                    statusEl.innerText = 'Offline';
+                    term.writeln('\n\x1b[1;31m[System]\x1b[0m Connection lost permanently.');
+                }
             };
 
             let inputBuffer = '';
