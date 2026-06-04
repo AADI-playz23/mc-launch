@@ -286,12 +286,9 @@
                 });
                 const data = await res.json();
 
-                if (data.status === 'success') {
+                if (data.status === 'success' || data.status === 'assigned' || data.status === 'queued') {
                     currentSessionId = data.session_id;
-                    connectWebSocket(data.worker_url, data.session_id);
-                } else if (data.status === 'queued') {
-                    currentSessionId = data.session_id;
-                    term.writeln('\x1b[1;33m[Queue]\x1b[0m VM limit reached. A new runner is booting. Please wait...');
+                    term.writeln('\x1b[1;33m[System]\x1b[0m Allocating resources. Please wait...');
                     pollStatus(data.session_id);
                 } else {
                     term.writeln(`\x1b[1;31m[Error]\x1b[0m ${data.message}`);
@@ -305,12 +302,14 @@
             const interval = setInterval(async () => {
                 const res = await fetch(`/api/status?session_id=${sessionId}`);
                 const data = await res.json();
-                if (data.status === 'assigned') {
+                if (data.status === 'running') {
                     clearInterval(interval);
-                    term.writeln('\x1b[1;32m[System]\x1b[0m Runner assigned. Connecting tunnel...');
+                    term.writeln('\x1b[1;32m[System]\x1b[0m Runner active. Connecting tunnel...');
                     connectWebSocket(data.worker_url, sessionId);
+                } else if (data.status === 'assigned') {
+                    // Runner assigned but hasn't picked up the task yet (polling takes up to 10s)
                 }
-            }, 5000);
+            }, 3000);
         }
 
         function connectWebSocket(workerUrl, sessionId) {
