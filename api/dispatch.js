@@ -93,7 +93,7 @@ export default async function handler(req, res) {
     // 6. No VM available: Queue the session
     await executeD1(
       'INSERT INTO sessions (session_id, instance_id, username, vm_id, status, started_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [session_id, instance.instance_id, user.username, null, 'queued', now, expires_at]
+      [session_id, instance.instance_id, user.username, 'unassigned', 'queued', now, expires_at]
     );
 
     if (activeVms.length < MAX_ACTIVE_RUNNERS) {

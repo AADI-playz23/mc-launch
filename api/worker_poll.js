@@ -40,7 +40,7 @@ export default async function handler(req, res) {
            FROM sessions s 
            JOIN instances i ON s.instance_id = i.instance_id 
            JOIN users u ON s.username = u.username
-           WHERE s.status = 'queued' AND s.vm_id IS NULL
+           WHERE s.status = 'queued' AND (s.vm_id IS NULL OR s.vm_id = 'unassigned')
            ORDER BY s.started_at ASC`
         );
 
