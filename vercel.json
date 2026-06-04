@@ -3,9 +3,6 @@
   "framework": null,
   "buildCommand": null,
   "outputDirectory": "public",
-  "functions": {
-    "api/**/*.js": {}
-  },
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/(.*)", "destination": "/$1" }
