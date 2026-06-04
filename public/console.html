@@ -158,6 +158,10 @@
 
         <div id="console-page" class="page active">
             <div id="terminal-container"></div>
+            <div style="display: flex; gap: 0.5rem; padding: 1rem; background: var(--bg-panel); border-top: 1px solid var(--border);">
+                <input type="text" id="command-input" placeholder="Type a command (e.g. /help, /say Hello) and press Enter..." style="margin-bottom: 0; background: var(--bg-main); border: 1px solid var(--border);" onkeypress="if(event.key==='Enter') sendCommandFromBox()">
+                <button class="btn btn-primary" onclick="sendCommandFromBox()">Send</button>
+            </div>
         </div>
 
         <div id="files-page" class="page">
@@ -374,6 +378,16 @@
                     term.write(e);
                 }
             });
+        }
+
+        function sendCommandFromBox() {
+            const inputEl = document.getElementById('command-input');
+            const cmd = inputEl.value;
+            if (cmd && ws && ws.readyState === WebSocket.OPEN) {
+                term.writeln(`\x1b[38;5;245m> ${cmd}\x1b[0m`);
+                ws.send(JSON.stringify({ type: 'command', command: cmd }));
+                inputEl.value = '';
+            }
         }
 
         function sendPower(action) {
