@@ -1,6 +1,6 @@
-import { queryD1, executeD1 } from './_lib/db.js';
-import { requireAuth, sendSuccess, sendError } from './_lib/middleware.js';
-import { getSessionDurationSecs } from './_lib/plans.js';
+import { queryD1, executeD1 } from './db.js';
+import { requireAuth, sendSuccess, sendError } from './middleware.js';
+import { getSessionDurationSecs } from './plans.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -27,13 +27,16 @@ export default async function handler(req, res) {
 
     const session = sessions[0];
 
+    // Don't renew terminated sessions
     if (session.status === 'terminated' || session.status === 'expired') {
       return sendError(res, 400, 'Cannot renew a stopped session. Start a new one.');
     }
 
+    // Determine renewal duration from plan
     const addSeconds = getSessionDurationSecs(user.plan);
     const now = Math.floor(Date.now() / 1000);
 
+    // If expired or close, renew from now. Otherwise add to existing expiry.
     let currentExpiry = session.expires_at || now;
     if (currentExpiry < now) currentExpiry = now;
 

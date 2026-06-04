@@ -3,6 +3,11 @@
   "framework": null,
   "buildCommand": null,
   "outputDirectory": "public",
+  "functions": {
+    "api/software.js": {
+      "includeFiles": "api/_data/**"
+    }
+  },
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/(.*)", "destination": "/$1" }

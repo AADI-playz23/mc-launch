@@ -16,12 +16,17 @@ export default function handler(req, res) {
     const fileData = fs.readFileSync(filePath, 'utf-8');
     const parsed = JSON.parse(fileData);
     
-    // Extract only the version names, explicitly keeping URLs secret
-    const versions = parsed.versions ? Object.keys(parsed.versions) : [];
+    // Support both paper.json format (has 'versions' object) and fabric.json format (flat object)
+    let versions = [];
+    if (parsed.versions) {
+      versions = Object.keys(parsed.versions);
+    } else {
+      versions = Object.keys(parsed).filter(k => k !== 'latest');
+    }
     
     return res.status(200).json({
       status: "success",
-      latest: parsed.latest,
+      latest: parsed.latest || versions[0], // fallback to first item if no latest
       versions: versions
     });
   } catch (e) {

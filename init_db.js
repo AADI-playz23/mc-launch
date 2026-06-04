@@ -78,6 +78,34 @@ async function initSchema() {
         `);
         console.log("✓ sessions index");
 
+        await executeD1(`
+          CREATE TABLE IF NOT EXISTS backups (
+            backup_id TEXT PRIMARY KEY,
+            instance_id INTEGER NOT NULL,
+            username TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            size_bytes INTEGER DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (instance_id) REFERENCES instances(instance_id)
+          )
+        `);
+        console.log("✓ backups table");
+
+        await executeD1(`
+          CREATE TABLE IF NOT EXISTS schedules (
+            schedule_id TEXT PRIMARY KEY,
+            instance_id INTEGER NOT NULL,
+            username TEXT NOT NULL,
+            type TEXT NOT NULL,
+            interval_hours INTEGER NOT NULL,
+            last_run INTEGER DEFAULT 0,
+            enabled INTEGER DEFAULT 1,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (instance_id) REFERENCES instances(instance_id)
+          )
+        `);
+        console.log("✓ schedules table");
+
         console.log("\nSchema initialized successfully!");
     } catch (error) {
         console.error("Schema init failed:", error.message);

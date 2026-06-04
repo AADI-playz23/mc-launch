@@ -103,8 +103,8 @@
             // Render existing servers
             instances.forEach((data, index) => {
                 const i = index + 1;
-                // Connection endpoint uses the bore SRV record format as specified
-                var liveIp = `_${data.game}._tcp.${data.username}.absoracloud.com`;
+                // Connection endpoint uses the astrocore.qzz.io domain
+                var liveIp = `${data.servername}.astrocore.qzz.io`;
                 var isOnline = localStorage.getItem('absora_online_' + data.instance_id) === '1';
                 grid.innerHTML += `
                     <div class="card">

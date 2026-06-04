@@ -310,7 +310,9 @@ def start_game_server(task):
     global used_cpu, used_ram
 
     session_id = task["session_id"]
+    instance_id = task.get("instance_id", session_id)
     username = task["username"]
+    servername = task.get("servername", f"srv-{instance_id}")
     game = task.get("game", "minecraft")
     software = task.get("software", "paper")
     version = task.get("version", "latest")
@@ -327,7 +329,7 @@ def start_game_server(task):
 
     print(f"[{session_id}] Starting {game} ({software}) for {username}. RAM: {requested_ram_gb}GB, Heap: {int(ram_mb * 0.95)}MB")
 
-    server_dir = f"/home/runner/servers/{session_id}"
+    server_dir = f"/home/runner/servers/server_{instance_id}"
     os.makedirs(server_dir, exist_ok=True)
 
     # Download the correct server JAR
@@ -341,10 +343,16 @@ def start_game_server(task):
             target_version = version
             if target_version == "latest" and "latest" in data:
                 target_version = data["latest"]
+            elif target_version == "latest" and data:
+                # If no "latest" key, pick the first key that isn't "latest"
+                target_version = next((k for k in data.keys() if k != "latest"), "latest")
             
             download_url = None
             if "versions" in data and target_version in data["versions"]:
                 download_url = data["versions"][target_version]
+            elif target_version in data:
+                # Flat format (like fabric.json)
+                download_url = data[target_version]
             
             if download_url:
                 print(f"[{session_id}] Downloading {software} {target_version} from {download_url}...")
@@ -386,7 +394,7 @@ def start_game_server(task):
 
     # Update Cloudflare SRV record if configured
     if CF_API_TOKEN and CF_ZONE_ID and remote_port:
-        print(f"[{session_id}] (Mock) Updating Cloudflare SRV _minecraft._tcp.{username}.absoracloud.com -> bore.pub:{remote_port}")
+        print(f"[{session_id}] (Mock) Updating Cloudflare SRV {servername}.astrocore.qzz.io -> bore.pub:{remote_port}")
 
     # Accept EULA
     with open(f"{server_dir}/eula.txt", "w") as f:
@@ -422,6 +430,7 @@ def start_game_server(task):
             "master_fd": master_fd,
             "bore_proc": bore_proc,
             "username": username,
+            "instance_id": instance_id,
             "game": game,
             "ram": requested_ram_str,
             "cpu": requested_cpu,
@@ -487,13 +496,100 @@ async def handle_client(websocket):
 
         async for message in websocket:
             data = json.loads(message)
-            if data.get("type") == "command":
+            msg_type = data.get("type")
+            
+            if msg_type == "command":
                 cmd = data.get("command", "") + "\n"
                 try:
                     proc.stdin.write(cmd)
                     proc.stdin.flush()
                 except Exception:
                     pass
+            elif msg_type == "power":
+                action = data.get("action")
+                if action == "stop":
+                    try:
+                        proc.stdin.write("stop\n")
+                        proc.stdin.flush()
+                    except Exception:
+                        pass
+                elif action == "restart":
+                    # For now just send stop, the daemon/API handles restart logic
+                    try:
+                        proc.stdin.write("stop\n")
+                        proc.stdin.flush()
+                    except Exception:
+                        pass
+                elif action == "kill":
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+            elif msg_type == "file_list":
+                path = data.get("path", "")
+                full_path = os.path.join(f"/home/runner/servers/server_{sess.get('instance_id')}", path.lstrip("/"))
+                try:
+                    items = []
+                    for name in os.listdir(full_path):
+                        p = os.path.join(full_path, name)
+                        items.append({
+                            "name": name,
+                            "is_dir": os.path.isdir(p),
+                            "size": os.path.getsize(p) if not os.path.isdir(p) else 0
+                        })
+                    await websocket.send(json.dumps({"type": "file_list_result", "path": path, "items": items}))
+                except Exception as e:
+                    await websocket.send(json.dumps({"type": "file_error", "message": str(e)}))
+            elif msg_type == "file_read":
+                path = data.get("path", "")
+                full_path = os.path.join(f"/home/runner/servers/server_{sess.get('instance_id')}", path.lstrip("/"))
+                try:
+                    with open(full_path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    await websocket.send(json.dumps({"type": "file_read_result", "path": path, "content": content}))
+                except Exception as e:
+                    await websocket.send(json.dumps({"type": "file_error", "message": str(e)}))
+            elif msg_type == "file_write":
+                path = data.get("path", "")
+                content = data.get("content", "")
+                full_path = os.path.join(f"/home/runner/servers/server_{sess.get('instance_id')}", path.lstrip("/"))
+                try:
+                    with open(full_path, "w", encoding="utf-8") as f:
+                        f.write(content)
+                    await websocket.send(json.dumps({"type": "file_write_success", "path": path}))
+                except Exception as e:
+                    await websocket.send(json.dumps({"type": "file_error", "message": str(e)}))
+            elif msg_type == "file_delete":
+                path = data.get("path", "")
+                full_path = os.path.join(f"/home/runner/servers/server_{sess.get('instance_id')}", path.lstrip("/"))
+                try:
+                    if os.path.isdir(full_path):
+                        shutil.rmtree(full_path)
+                    else:
+                        os.remove(full_path)
+                    await websocket.send(json.dumps({"type": "file_delete_success", "path": path}))
+                except Exception as e:
+                    await websocket.send(json.dumps({"type": "file_error", "message": str(e)}))
+            elif msg_type == "stats":
+                # Mock stats since psutil is missing
+                await websocket.send(json.dumps({
+                    "type": "stats_result",
+                    "cpu": 15,
+                    "ram": 1024,
+                    "uptime": 3600
+                }))
+
+            elif msg_type == "backup_create":
+                # Simplistic backup creation
+                try:
+                    server_path = os.path.join(f"/home/runner/servers/server_{sess.get('instance_id')}")
+                    backup_dir = f"/home/runner/backups/{sess.get('instance_id')}"
+                    os.makedirs(backup_dir, exist_ok=True)
+                    backup_file = os.path.join(backup_dir, f"backup_{int(time.time())}.tar.gz")
+                    subprocess.Popen(["tar", "-czf", backup_file, "-C", server_path, "."])
+                    await websocket.send(json.dumps({"type": "backup_success", "message": "Backup started"}))
+                except Exception as e:
+                    await websocket.send(json.dumps({"type": "backup_error", "message": str(e)}))
 
     except websockets.exceptions.ConnectionClosed:
         pass
