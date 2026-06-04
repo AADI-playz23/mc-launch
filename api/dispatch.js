@@ -1,7 +1,7 @@
 import { queryD1, executeD1 } from './_lib/db.js';
 import { requireAuth, sendSuccess, sendError } from './_lib/middleware.js';
 import { getRamGb, getCpu, getSessionDurationSecs } from './_lib/plans.js';
-import crypto from 'crypto';
+
 
 const MAX_VM_RAM_GB = 16;
 const MAX_VM_CPU = 4;
@@ -49,7 +49,7 @@ export default async function handler(req, res) {
 
     const now = Math.floor(Date.now() / 1000);
     const expires_at = now + sessionDuration;
-    const session_id = `sess_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+    const session_id = `sess_${Math.random().toString(36).substring(2, 14)}`;
 
     // 4. Find an active VM with available capacity
     const activeVms = await queryD1(
@@ -109,7 +109,7 @@ export default async function handler(req, res) {
 
   } catch (error) {
     console.error('Dispatch error:', error);
-    return sendError(res, 500, 'Internal server error');
+    return sendError(res, 500, `Internal server error: ${error.message}`);
   }
 }
 

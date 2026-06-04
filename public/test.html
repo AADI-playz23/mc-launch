@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AbsoraCloud | System Diagnostics</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --bg-main: #05050a;
+            --bg-panel: #13131f;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --success: #10b981;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --border: #2d2d3f;
+            --accent: #8b5cf6;
+        }
+        body {
+            margin: 0;
+            padding: 2rem;
+            background: var(--bg-main);
+            color: var(--text-main);
+            font-family: 'Inter', system-ui, sans-serif;
+            display: flex;
+            justify-content: center;
+        }
+        .container {
+            width: 100%;
+            max-width: 800px;
+        }
+        .panel {
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+        }
+        h1 {
+            color: var(--accent);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 0;
+        }
+        .check-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .check-row:last-child {
+            border-bottom: none;
+        }
+        .status-badge {
+            padding: 0.4rem 1rem;
+            border-radius: 99px;
+            font-weight: bold;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .status-loading { background: #3b82f620; color: #3b82f6; border: 1px solid #3b82f6; }
+        .status-success { background: #10b98120; color: #10b981; border: 1px solid #10b981; }
+        .status-danger { background: #ef444420; color: #ef4444; border: 1px solid #ef4444; }
+        
+        .btn {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 0.8rem 1.5rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 1rem;
+        }
+        .btn:hover { opacity: 0.9; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h1><i class="fa-solid fa-stethoscope"></i> System Diagnostics</h1>
+        <button class="btn" onclick="runTests()"><i class="fa-solid fa-rotate-right"></i> Run Tests</button>
+    </div>
+
+    <div class="panel">
+        <h2 style="margin-top: 0; border-bottom: 1px solid var(--border); padding-bottom: 1rem;">Environment Variables</h2>
+        <div id="env-vars">
+            <div class="check-row"><span>Loading...</span></div>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2 style="margin-top: 0; border-bottom: 1px solid var(--border); padding-bottom: 1rem;">External Services</h2>
+        <div id="services">
+            <div class="check-row"><span>Loading...</span></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function createBadge(status, text = null) {
+        if (status === true || status === 'success') {
+            return `<span class="status-badge status-success"><i class="fa-solid fa-check"></i> ${text || 'Configured'}</span>`;
+        } else if (status === false) {
+            return `<span class="status-badge status-danger"><i class="fa-solid fa-xmark"></i> Missing</span>`;
+        } else if (status.startsWith('failed')) {
+            return `<span class="status-badge status-danger"><i class="fa-solid fa-xmark"></i> ${status}</span>`;
+        } else {
+            return `<span class="status-badge status-danger"><i class="fa-solid fa-circle-exclamation"></i> ${status}</span>`;
+        }
+    }
+
+    async function runTests() {
+        document.getElementById('env-vars').innerHTML = '<div class="check-row"><span><i class="fa-solid fa-spinner fa-spin"></i> Running diagnostics...</span></div>';
+        document.getElementById('services').innerHTML = '<div class="check-row"><span><i class="fa-solid fa-spinner fa-spin"></i> Running diagnostics...</span></div>';
+        
+        try {
+            const res = await fetch('/api/test');
+            const data = await res.json();
+            
+            if (data.status === 'success') {
+                const env = data.diagnostics.environment_variables;
+                
+                document.getElementById('env-vars').innerHTML = `
+                    <div class="check-row"><span>CLOUDFLARE_API_TOKEN (D1 Database Auth)</span> ${createBadge(env.CLOUDFLARE_API_TOKEN)}</div>
+                    <div class="check-row"><span>CLOUDFLARE_ACCOUNT_ID (D1 Routing)</span> ${createBadge(env.CLOUDFLARE_ACCOUNT_ID)}</div>
+                    <div class="check-row"><span>D1_DB_1_ID (Database ID)</span> ${createBadge(env.D1_DB_1_ID)}</div>
+                    <div class="check-row"><span>ABSORA_PAT (GitHub Action Trigger)</span> ${createBadge(env.ABSORA_PAT)}</div>
+                    <div class="check-row"><span>JWT_SECRET (User Auth)</span> ${createBadge(env.JWT_SECRET)}</div>
+                    <div class="check-row"><span>WORKER_SECRET (Runner Auth)</span> ${createBadge(env.WORKER_SECRET)}</div>
+                `;
+
+                document.getElementById('services').innerHTML = `
+                    <div class="check-row"><span>Cloudflare D1 SQL Connection</span> ${createBadge(data.diagnostics.database_connection, 'Connected')}</div>
+                    <div class="check-row"><span>GitHub Token Authentication</span> ${createBadge(data.diagnostics.github_auth.includes('success') ? 'success' : data.diagnostics.github_auth, data.diagnostics.github_auth)}</div>
+                `;
+            } else {
+                throw new Error(data.message || 'Unknown API Error');
+            }
+        } catch (e) {
+            document.getElementById('env-vars').innerHTML = `<div class="check-row" style="color: var(--danger)">Critical Error: ${e.message}</div>`;
+            document.getElementById('services').innerHTML = ``;
+        }
+    }
+
+    // Run on load
+    runTests();
+</script>
+</body>
+</html>
