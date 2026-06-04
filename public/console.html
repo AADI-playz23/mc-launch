@@ -281,12 +281,12 @@
                 }
             });
 
-        async function bootServer() {
+        async function bootServer(force = false) {
             try {
                 const res = await fetch('/api/dispatch', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ instance_id: instanceId })
+                    body: JSON.stringify({ instance_id: instanceId, force_trigger: force })
                 });
                 const data = await res.json();
 
@@ -394,7 +394,8 @@
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ type: 'power', action: action }));
             } else if (action === 'start') {
-                bootServer();
+                term.writeln('\x1b[1;36m[AbsoraCloud]\x1b[0m Forcing manual server start...');
+                bootServer(true);
             }
         }
 
