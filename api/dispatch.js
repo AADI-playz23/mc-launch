@@ -39,7 +39,20 @@ export default async function handler(req, res) {
     );
     if (activeSessions && activeSessions.length > 0) {
       const existing = activeSessions[0];
-      return sendError(res, 409, `Instance already has an active session (${existing.session_id}). Stop it first.`);
+      
+      // If it's already running or assigned, find the worker URL to reconnect
+      let worker_url = null;
+      if (existing.vm_id && existing.vm_id !== 'unassigned') {
+         const vmInfo = await queryD1('SELECT worker_url FROM vms WHERE vm_id = ?', [existing.vm_id]);
+         if (vmInfo && vmInfo.length > 0) worker_url = vmInfo[0].worker_url;
+      }
+
+      return sendSuccess(res, {
+        status: existing.status,
+        message: 'Reconnected to existing session',
+        session_id: existing.session_id,
+        worker_url: worker_url
+      });
     }
 
     // 3. Determine required resources from plan
