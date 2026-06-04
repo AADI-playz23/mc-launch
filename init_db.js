@@ -1,23 +1,88 @@
 import fs from 'fs';
 
+// Load .env file
 const envRaw = fs.readFileSync('.env', 'utf-8');
 envRaw.split('\n').forEach(line => {
     const match = line.match(/^([^=]+)=(.*)$/);
     if (match) process.env[match[1].trim()] = match[2].trim().replace(/^"|"$/g, '');
 });
-import handler from './api/setup_db.js';
 
-const req = {};
-const res = {
-  status: (code) => {
-    return {
-      json: (data) => {
-        console.log(`Status: ${code}`);
-        console.log(data);
-      }
+// Set a JWT_SECRET for local execution
+if (!process.env.JWT_SECRET) process.env.JWT_SECRET = 'local-init-key';
+
+import { executeD1 } from './api/_lib/db.js';
+
+async function initSchema() {
+    console.log("Initializing Cloudflare D1 schema...");
+
+    try {
+        await executeD1(`
+          CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            plan TEXT DEFAULT 'free',
+            is_admin INTEGER DEFAULT 0,
+            banned INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+        console.log("✓ users table");
+
+        await executeD1(`
+          CREATE TABLE IF NOT EXISTS instances (
+            instance_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            servername TEXT NOT NULL,
+            game TEXT DEFAULT 'minecraft',
+            software TEXT,
+            version TEXT,
+            ram TEXT DEFAULT '4G',
+            status TEXT DEFAULT 'offline',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+        console.log("✓ instances table");
+
+        await executeD1(`
+          CREATE TABLE IF NOT EXISTS vms (
+            vm_id TEXT PRIMARY KEY,
+            worker_url TEXT NOT NULL,
+            used_ram INTEGER DEFAULT 0,
+            used_cpu INTEGER DEFAULT 0,
+            last_heartbeat INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+        console.log("✓ vms table");
+
+        await executeD1(`
+          CREATE TABLE IF NOT EXISTS sessions (
+            session_id TEXT PRIMARY KEY,
+            instance_id INTEGER NOT NULL,
+            username TEXT NOT NULL,
+            vm_id TEXT,
+            status TEXT DEFAULT 'queued',
+            assigned_port INTEGER,
+            started_at INTEGER,
+            expires_at INTEGER,
+            terminated_at INTEGER,
+            termination_reason TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+        console.log("✓ sessions table");
+
+        await executeD1(`
+          CREATE INDEX IF NOT EXISTS idx_sessions_status_vm ON sessions(status, vm_id)
+        `);
+        console.log("✓ sessions index");
+
+        console.log("\nSchema initialized successfully!");
+    } catch (error) {
+        console.error("Schema init failed:", error.message);
+        process.exit(1);
     }
-  }
-};
+}
 
-console.log("Initializing Cloudflare D1 schema...");
-await handler(req, res);
+await initSchema();

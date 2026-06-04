@@ -1,65 +1,92 @@
-import { queryD1, executeD1 } from './db.js';
-import { getAuthUser } from './auth_utils.js';
+import { queryD1, executeD1 } from './_lib/db.js';
+import { requireAuth, sendSuccess, sendError, validateBody } from './_lib/middleware.js';
+import { getPlan } from './_lib/plans.js';
 
 export default async function handler(req, res) {
-  const user = getAuthUser(req);
-  if (!user) {
-    return res.status(401).json({ status: "error", message: "Unauthorized" });
-  }
+  const user = requireAuth(req, res);
+  if (!user) return;
 
   // GET: List all instances for the user
   if (req.method === 'GET') {
     try {
       const instances = await queryD1(
-        "SELECT * FROM instances WHERE username = ? ORDER BY created_at DESC", 
+        'SELECT * FROM instances WHERE username = ? ORDER BY created_at DESC',
         [user.username]
       );
-      return res.status(200).json({ status: "success", instances: instances || [] });
+      return sendSuccess(res, { instances: instances || [] });
     } catch (error) {
-      return res.status(500).json({ status: "error", message: error.message });
+      return sendError(res, 500, error.message);
     }
   }
 
   // POST: Create a new instance
   if (req.method === 'POST') {
-    const { servername, game, software, version } = req.body;
-    
-    if (!servername || !game || !software || !version) {
-      return res.status(400).json({ status: "error", message: "Missing required fields" });
-    }
+    const valid = validateBody(req, res, {
+      servername: {
+        required: true,
+        type: 'string',
+        minLength: 2,
+        maxLength: 32,
+        pattern: /^[a-z0-9-]+$/,
+      },
+      game: { required: true, type: 'string' },
+      software: { required: true, type: 'string' },
+      version: { required: true, type: 'string' },
+    });
+    if (!valid) return;
 
-    // Determine RAM based on user plan
-    const ram = user.plan === 'pro' ? '6G' : (user.plan === 'developer' ? '8G' : '4G');
+    const { servername, game, software, version } = req.body;
+    const plan = getPlan(user.plan);
 
     try {
-      await executeD1(
-        "INSERT INTO instances (username, servername, game, software, version, ram) VALUES (?, ?, ?, ?, ?, ?)",
-        [user.username, servername, game, software, version, ram]
+      // Enforce slot limit
+      const existing = await queryD1(
+        'SELECT COUNT(*) as count FROM instances WHERE username = ?',
+        [user.username]
       );
-      return res.status(200).json({ status: "success", message: "Server instance created" });
+      const currentCount = existing?.[0]?.count || 0;
+
+      if (currentCount >= plan.slots) {
+        return sendError(res, 403, `Your ${plan.label} plan allows ${plan.slots} instance(s). Upgrade to create more.`);
+      }
+
+      await executeD1(
+        'INSERT INTO instances (username, servername, game, software, version, ram) VALUES (?, ?, ?, ?, ?, ?)',
+        [user.username, servername, game, software, version, plan.ram]
+      );
+
+      return sendSuccess(res, { message: 'Server instance created' });
     } catch (error) {
-      return res.status(500).json({ status: "error", message: error.message });
+      return sendError(res, 500, error.message);
     }
   }
 
   // DELETE: Remove an instance
   if (req.method === 'DELETE') {
+    const valid = validateBody(req, res, {
+      instance_id: { required: true },
+    });
+    if (!valid) return;
+
     const { instance_id } = req.body;
-    
-    if (!instance_id) {
-      return res.status(400).json({ status: "error", message: "instance_id required" });
-    }
 
     try {
+      // Also clean up any sessions for this instance
       await executeD1(
-        "DELETE FROM instances WHERE instance_id = ? AND username = ?",
+        'DELETE FROM sessions WHERE instance_id = ? AND username = ?',
         [instance_id, user.username]
       );
-      return res.status(200).json({ status: "success", message: "Server deleted" });
+
+      await executeD1(
+        'DELETE FROM instances WHERE instance_id = ? AND username = ?',
+        [instance_id, user.username]
+      );
+
+      return sendSuccess(res, { message: 'Server deleted' });
     } catch (error) {
-      return res.status(500).json({ status: "error", message: error.message });
+      return sendError(res, 500, error.message);
     }
   }
 
-  return res.status(405).json({ status: "error", message: "Method not allowed" });
+  return sendError(res, 405, 'Method not allowed');
 }
