@@ -88,5 +88,27 @@ export default async function handler(req, res) {
     }
   }
 
+  // PATCH: Update instance software and version
+  if (req.method === 'PATCH') {
+    const valid = validateBody(req, res, {
+      instance_id: { required: true },
+      software: { required: true, type: 'string' },
+      version: { required: true, type: 'string' },
+    });
+    if (!valid) return;
+
+    const { instance_id, software, version } = req.body;
+
+    try {
+      await executeD1(
+        'UPDATE instances SET software = ?, version = ? WHERE instance_id = ? AND username = ?',
+        [software, version, instance_id, user.username]
+      );
+      return sendSuccess(res, { message: 'Server software updated. Restart server to apply changes.' });
+    } catch (error) {
+      return sendError(res, 500, error.message);
+    }
+  }
+
   return sendError(res, 405, 'Method not allowed');
 }

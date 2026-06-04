@@ -131,14 +131,64 @@
                         <input type="hidden" id="g-${i}" value="minecraft">
 
                         <label class="label">Software / Distribution</label>
-                        <select id="s-${i}">
+                        <select id="s-${i}" onchange="loadVersions(${i})">
                             <option value="paper">PaperMC</option>
                             <option value="fabric">Fabric</option>
                             <option value="forge">Forge</option>
+                            <option value="high_performance">High Performance</option>
+                            <option value="hybrid">Hybrid</option>
+                            <option value="proxies">Proxies</option>
+                            <option value="purpur">Purpur</option>
+                            <option value="quilt">Quilt</option>
+                            <option value="spigot">Spigot</option>
+                        </select>
+
+                        <label class="label">Version</label>
+                        <select id="v-${i}">
+                            <option value="latest">Loading...</option>
                         </select>
 
                         <button class="btn btn-p" onclick="setup(${i})" style="margin-top:0.5rem;">Provision Node</button>
                     </div>`;
+            }
+            
+            // Populate versions after rendering
+            for (let i = instances.length + 1; i <= currentPlan.slots; i++) {
+                loadVersions(i);
+            }
+        }
+
+        async function loadVersions(id) {
+            const select = document.getElementById(`s-${id}`);
+            const versionSelect = document.getElementById(`v-${id}`);
+            const software = select.value;
+            
+            versionSelect.innerHTML = '<option value="latest">Loading...</option>';
+            versionSelect.disabled = true;
+            
+            try {
+                const res = await fetch(`/api/software?type=${software}`);
+                if (!res.ok) throw new Error("API error");
+                const data = await res.json();
+                
+                if (data.status !== "success") throw new Error(data.message);
+                
+                versionSelect.innerHTML = '';
+                
+                if (data.latest) {
+                    versionSelect.innerHTML += `<option value="latest">Latest (${data.latest})</option>`;
+                }
+                
+                if (data.versions && data.versions.length > 0) {
+                    for (const ver of data.versions) {
+                        versionSelect.innerHTML += `<option value="${ver}">${ver}</option>`;
+                    }
+                }
+            } catch(e) {
+                console.error("Failed to load versions:", e);
+                versionSelect.innerHTML = '<option value="latest">Latest</option>';
+            } finally {
+                versionSelect.disabled = false;
             }
         }
 
@@ -154,7 +204,7 @@
                 servername: name,
                 game: document.getElementById(`g-${id}`).value,
                 software: document.getElementById(`s-${id}`).value,
-                version: "latest"
+                version: document.getElementById(`v-${id}`).value
             };
 
             try {

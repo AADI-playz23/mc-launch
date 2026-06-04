@@ -1,0 +1,7 @@
+{
+  "Velocity 3.3.0 (Stable Release)": "https://api.papermc.io/v2/projects/velocity/versions/3.3.0/builds/400/downloads/velocity-3.3.0-400.jar",
+  "Velocity 3.2.0 (Stable Release)": "https://api.papermc.io/v2/projects/velocity/versions/3.2.0/builds/280/downloads/velocity-3.2.0-280.jar",
+  "Velocity 3.1.2 (Stable Release)": "https://api.papermc.io/v2/projects/velocity/versions/3.1.2/builds/167/downloads/velocity-3.1.2-167.jar",
+  "Velocity 3.0.0 (Stable Release)": "https://api.papermc.io/v2/projects/velocity/versions/3.0.0/builds/25/downloads/velocity-3.0.0-25.jar",
+  "BungeeCord (Universal Stable 1.8-1.21.11)": "https://ci.md-5.net/job/BungeeCord/lastSuccessfulBuild/artifact/bootstrap/target/BungeeCord.jar"
+}

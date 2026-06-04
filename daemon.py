@@ -1,21 +1,26 @@
 import os
+import sys
 import time
 import json
+import signal
 import threading
 import subprocess
 import select
 import asyncio
 import websockets
 import re
-import sys
 import shutil
 import requests
 import pty
+import socket
 
-BASE_URL = os.environ.get("BASE_URL", "https://absoracloud-v2.vercel.app")
+# ── Configuration ──
+
+BASE_URL = os.environ.get("BASE_URL", "https://absoramchost.vercel.app")
 API_URL = BASE_URL + "/api/worker_api"
 POLL_URL = BASE_URL + "/api/worker_poll"
 RUNNER_ID = os.environ.get("RUNNER_ID", f"runner_{os.urandom(4).hex()}")
+WORKER_SECRET = os.environ.get("WORKER_SECRET", "")
 PORT = 8080
 
 CF_API_TOKEN = os.environ.get("CLOUDFLARE_API_TOKEN", "")
@@ -25,69 +30,142 @@ CF_ZONE_ID = os.environ.get("CLOUDFLARE_ZONE_ID", "")
 TOTAL_CPU = 4
 TOTAL_RAM_GB = 16
 
+# ── State ──
+
 active_sessions = {}
 worker_url = None
 registered_vm_id = RUNNER_ID
+shutting_down = False
 
 used_cpu = 0
 used_ram = 0
+resource_lock = threading.Lock()
+
+
+# ── Aikar's Flags (Industry Standard for Minecraft Hosting) ──
+# Used by PebbleHost, Apex Hosting, BisectHosting, and all professional hosts.
+# Tuned G1GC specifically for Minecraft server workloads.
+
+def get_aikars_flags(ram_mb):
+    """Returns Aikar's optimized JVM flags for Minecraft servers.
+    Uses 95% of allocated RAM for Java heap. Adjusts G1GC parameters for 12G+ allocations."""
+
+    heap_mb = int(ram_mb * 0.95)
+
+    # Base Aikar's flags
+    flags = [
+        f"-Xms{heap_mb}M",
+        f"-Xmx{heap_mb}M",
+        "-XX:+UseG1GC",
+        "-XX:+ParallelRefProcEnabled",
+        "-XX:MaxGCPauseMillis=200",
+        "-XX:+UnlockExperimentalVMOptions",
+        "-XX:+DisableExplicitGC",
+        "-XX:+AlwaysPreTouch",
+        "-XX:G1HeapWastePercent=5",
+        "-XX:G1MixedGCCountTarget=4",
+        "-XX:G1MixedGCLiveThresholdPercent=90",
+        "-XX:G1RSetUpdatingPauseTimePercent=5",
+        "-XX:SurvivorRatio=32",
+        "-XX:+PerfDisableSharedMem",
+        "-XX:MaxTenuringThreshold=1",
+        "-Dusing.aikars.flags=https://mcflags.emc.gs",
+        "-Daikars.new.flags=true",
+    ]
+
+    # Adjust for large heaps (12GB+)
+    if heap_mb >= 12288:
+        flags.extend([
+            "-XX:G1NewSizePercent=40",
+            "-XX:G1MaxNewSizePercent=50",
+            "-XX:G1HeapRegionSize=16M",
+            "-XX:G1ReservePercent=20",
+            "-XX:InitiatingHeapOccupancyPercent=20",
+        ])
+    else:
+        flags.extend([
+            "-XX:G1NewSizePercent=30",
+            "-XX:G1MaxNewSizePercent=40",
+            "-XX:G1HeapRegionSize=8M",
+            "-XX:G1ReservePercent=20",
+            "-XX:InitiatingHeapOccupancyPercent=15",
+        ])
+
+    return flags
+
+
+# ── API Helpers ──
+
+def api_headers():
+    headers = {"Content-Type": "application/json"}
+    if WORKER_SECRET:
+        headers["Authorization"] = f"Bearer {WORKER_SECRET}"
+    return headers
+
 
 def api_call(url, payload):
     try:
-        resp = requests.post(url, json=payload, timeout=10)
+        resp = requests.post(url, json=payload, headers=api_headers(), timeout=15)
         return resp.json()
     except Exception as e:
         print(f"API Error ({url}): {e}")
         return {"status": "error"}
 
+
+# ── Heartbeat & Poll Loop ──
+
 def heartbeat_and_poll_loop():
     global registered_vm_id, used_cpu, used_ram
     print("Started heartbeat & poll loop")
-    
+
     zero_users_start_time = time.time()
-    
-    while True:
+
+    while not shutting_down:
         num_users = len(active_sessions)
-        
-        # Idle termination logic
+
+        # Idle termination: 5 minutes with no users
         if num_users == 0:
-            if time.time() - zero_users_start_time > 300: # 5 mins idle
-                print("No active users for 5 minutes. Terminating runner to save resources.")
-                os._exit(0)
+            if time.time() - zero_users_start_time > 300:
+                print("No active users for 5 minutes. Initiating graceful shutdown.")
+                graceful_shutdown()
+                return
         else:
             zero_users_start_time = time.time()
-            
+
         try:
             # 1. Heartbeat
+            with resource_lock:
+                current_ram = used_ram
+                current_cpu = used_cpu
+
             res = api_call(API_URL, {
                 "op": "vm_heartbeat",
                 "vm_id": registered_vm_id,
-                "used_ram": used_ram,
-                "used_cpu": used_cpu
+                "used_ram": current_ram,
+                "used_cpu": current_cpu,
             })
-            
+
+            # Re-register if VM was lost from DB
             if res.get("status") == "error" and worker_url:
-                print("VM not found, re-registering...")
+                print("VM not found in DB, re-registering...")
                 reg = api_call(API_URL, {
                     "op": "register_vm",
                     "vm_id": registered_vm_id,
                     "worker_url": worker_url,
-                    "used_ram": used_ram,
-                    "used_cpu": used_cpu
+                    "used_ram": current_ram,
+                    "used_cpu": current_cpu,
                 })
                 registered_vm_id = reg.get("vm_id", registered_vm_id)
 
+            # Kill expired sessions (collect first, then delete — safe iteration)
             if res.get("status") == "success" and "kill_sessions" in res:
-                for s_id in res["kill_sessions"]:
-                    if s_id in active_sessions:
-                        print(f"[{s_id}] Session expired. Terminating...")
-                        sess = active_sessions[s_id]
-                        sess["proc"].terminate()
-                        sess["bore_proc"].terminate()
-                        del active_sessions[s_id]
-                        # Free up capacity
-                        used_ram -= int(sess.get("ram", "4G").replace("G", ""))
-                        used_cpu -= sess.get("cpu", 1)
+                sessions_to_kill = [
+                    s_id for s_id in res["kill_sessions"]
+                    if s_id in active_sessions
+                ]
+                for s_id in sessions_to_kill:
+                    print(f"[{s_id}] Session expired. Terminating...")
+                    stop_session(s_id, reason="expired")
 
             # 2. Poll for new tasks
             poll_res = api_call(POLL_URL, {"vm_id": registered_vm_id})
@@ -95,84 +173,209 @@ def heartbeat_and_poll_loop():
                 task = poll_res["task"]
                 if isinstance(task, str):
                     task = json.loads(task)
-                
+
                 print(f"Received new task: {task['session_id']}")
-                threading.Thread(target=start_game_server, args=(task,)).start()
+                threading.Thread(target=start_game_server, args=(task,), daemon=True).start()
 
         except Exception as e:
             print(f"Heartbeat/Poll loop exception: {e}")
-            
+
         time.sleep(10)
+
+
+# ── Session Management ──
+
+def stop_session(session_id, reason="manual"):
+    """Gracefully stops a session: sends 'stop' to the game server, waits, then kills."""
+    global used_cpu, used_ram
+
+    if session_id not in active_sessions:
+        return
+
+    sess = active_sessions[session_id]
+    proc = sess.get("proc")
+    bore_proc = sess.get("bore_proc")
+    master_fd = sess.get("master_fd")
+
+    # Try graceful stop
+    try:
+        if proc and proc.poll() is None:
+            proc.stdin.write("stop\n")
+            proc.stdin.flush()
+            print(f"[{session_id}] Sent 'stop' command. Waiting 10s for graceful shutdown...")
+            proc.wait(timeout=10)
+    except Exception:
+        pass
+
+    # Force kill if still running
+    try:
+        if proc and proc.poll() is None:
+            proc.terminate()
+            proc.wait(timeout=5)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+    # Kill bore tunnel
+    try:
+        if bore_proc and bore_proc.poll() is None:
+            bore_proc.terminate()
+    except Exception:
+        pass
+
+    # Close file descriptor
+    try:
+        if master_fd is not None:
+            os.close(master_fd)
+    except Exception:
+        pass
+
+    # Free resources
+    with resource_lock:
+        used_ram -= int(sess.get("ram", "4G").replace("G", ""))
+        used_cpu -= sess.get("cpu", 1)
+        used_ram = max(0, used_ram)
+        used_cpu = max(0, used_cpu)
+
+    del active_sessions[session_id]
+    print(f"[{session_id}] Session stopped. Reason: {reason}")
+
+
+# ── Tunnel Management ──
 
 def start_tunnel():
     global worker_url, registered_vm_id
-    print("Starting cloudflared tunnel for WebSockets...")
-    tunnel_proc = subprocess.Popen(
-        ["cloudflared", "tunnel", "--url", f"http://localhost:{PORT}"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True
-    )
-    for line in tunnel_proc.stdout:
-        print(f"[TUNNEL] {line.strip()}")
-        match = re.search(r'https://[a-zA-Z0-9-]+\.trycloudflare\.com', line)
-        if match:
-            url = match.group(0)
-            worker_url = url.replace("https://", "wss://")
-            print(f"Cloudflare tunnel established: {worker_url}")
-            
-            # Register VM
-            reg = api_call(API_URL, {
-                "op": "register_vm",
-                "vm_id": registered_vm_id,
-                "worker_url": worker_url,
-                "used_ram": used_ram,
-                "used_cpu": used_cpu
-            })
-            registered_vm_id = reg.get("vm_id", registered_vm_id)
-            print(f"Registered as VM: {registered_vm_id}")
-            
-            threading.Thread(target=heartbeat_and_poll_loop, daemon=True).start()
-            break
+    max_retries = 5
+
+    for attempt in range(max_retries):
+        if shutting_down:
+            return
+
+        print(f"Starting cloudflared tunnel (attempt {attempt + 1}/{max_retries})...")
+        try:
+            tunnel_proc = subprocess.Popen(
+                ["cloudflared", "tunnel", "--url", f"http://localhost:{PORT}"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+
+            for line in tunnel_proc.stdout:
+                print(f"[TUNNEL] {line.strip()}")
+                match = re.search(r'https://[a-zA-Z0-9-]+\.trycloudflare\.com', line)
+                if match:
+                    url = match.group(0)
+                    worker_url = url.replace("https://", "wss://")
+                    print(f"Cloudflare tunnel established: {worker_url}")
+
+                    # Register VM
+                    reg = api_call(API_URL, {
+                        "op": "register_vm",
+                        "vm_id": registered_vm_id,
+                        "worker_url": worker_url,
+                        "used_ram": used_ram,
+                        "used_cpu": used_cpu,
+                    })
+                    registered_vm_id = reg.get("vm_id", registered_vm_id)
+                    print(f"Registered as VM: {registered_vm_id}")
+
+                    # Start heartbeat loop
+                    threading.Thread(target=heartbeat_and_poll_loop, daemon=True).start()
+
+                    # Monitor tunnel process — if it dies, we'll restart
+                    tunnel_proc.wait()
+                    print("Cloudflare tunnel process exited! Restarting...")
+                    break
+
+            # Tunnel process exited without establishing connection
+            print(f"Tunnel attempt {attempt + 1} failed.")
+
+        except Exception as e:
+            print(f"Tunnel error: {e}")
+
+        # Exponential backoff
+        wait_time = min(2 ** attempt * 5, 60)
+        print(f"Retrying tunnel in {wait_time}s...")
+        time.sleep(wait_time)
+
+    print("FATAL: Could not establish cloudflare tunnel after all retries.")
+    graceful_shutdown()
+
+
+# ── Game Server Startup ──
 
 def start_game_server(task):
     global used_cpu, used_ram
-    
+
     session_id = task["session_id"]
     username = task["username"]
-    game = task["game"]
-    requested_ram_str = task["ram"] # e.g. "4G"
-    requested_cpu = task["cpu"]
-    
-    # 1. Update Capacity Tracking (Note: We track nominal requested capacity)
-    requested_ram_gb = int(requested_ram_str.replace('G', ''))
-    used_cpu += requested_cpu
-    used_ram += requested_ram_gb
-    
-    # 2. Free Penalty Buffer Logic (Cut ~500MB from actual process limit)
-    # E.g. 4GB requested -> 3.5GB actual limit (3584 MB -> ~3670016000 bytes)
-    actual_limit_mb = (requested_ram_gb * 1024) - 500
-    actual_limit_bytes = actual_limit_mb * 1024 * 1024
-    
-    print(f"[{session_id}] Starting {game} for {username}. Nominal RAM: {requested_ram_gb}GB, Actual Limit: {actual_limit_mb}MB")
-    
+    game = task.get("game", "minecraft")
+    software = task.get("software", "paper")
+    version = task.get("version", "latest")
+    requested_ram_str = task.get("ram", "4G")
+    requested_cpu = task.get("cpu", 1)
+
+    # Track resources
+    requested_ram_gb = int(requested_ram_str.replace("G", ""))
+    with resource_lock:
+        used_cpu += requested_cpu
+        used_ram += requested_ram_gb
+
+    ram_mb = requested_ram_gb * 1024
+
+    print(f"[{session_id}] Starting {game} ({software}) for {username}. RAM: {requested_ram_gb}GB, Heap: {int(ram_mb * 0.95)}MB")
+
     server_dir = f"/home/runner/servers/{session_id}"
     os.makedirs(server_dir, exist_ok=True)
-    
-    # 3. Find Free Internal Port
-    import socket
+
+    # Download the correct server JAR
+    try:
+        json_path = f"api/_data/{software}.json"
+        print(f"[{session_id}] Reading software metadata from {json_path}")
+        if os.path.exists(json_path):
+            with open(json_path, 'r') as f:
+                data = json.load(f)
+                
+            target_version = version
+            if target_version == "latest" and "latest" in data:
+                target_version = data["latest"]
+            
+            download_url = None
+            if "versions" in data and target_version in data["versions"]:
+                download_url = data["versions"][target_version]
+            
+            if download_url:
+                print(f"[{session_id}] Downloading {software} {target_version} from {download_url}...")
+                jar_resp = requests.get(download_url, stream=True, timeout=30)
+                if jar_resp.ok:
+                    with open(f"{server_dir}/server.jar", "wb") as f:
+                        for chunk in jar_resp.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                    print(f"[{session_id}] Download complete.")
+                else:
+                    print(f"[{session_id}] Failed to download JAR: HTTP {jar_resp.status_code}")
+            else:
+                print(f"[{session_id}] Version {target_version} not found in {software}.json")
+        else:
+            print(f"[{session_id}] Failed to find {software}.json locally at {json_path}")
+    except Exception as e:
+        print(f"[{session_id}] Error during JAR download: {e}")
+
+    # Find free internal port
     s = socket.socket()
-    s.bind(('', 0))
+    s.bind(("", 0))
     internal_port = s.getsockname()[1]
     s.close()
-    
-    # 4. Start Bore Tunnel
+
+    # Start Bore Tunnel for game port
     bore_proc = subprocess.Popen(
         ["bore", "local", str(internal_port), "--to", "bore.pub"],
         stdout=subprocess.PIPE,
-        text=True
+        text=True,
     )
-    
+
     remote_port = None
     for line in bore_proc.stdout:
         match = re.search(r'listening at bore\.pub:(\d+)', line)
@@ -180,23 +383,28 @@ def start_game_server(task):
             remote_port = match.group(1)
             print(f"[{session_id}] Bore tunnel active: bore.pub:{remote_port}")
             break
-            
-    # Optional: Update Cloudflare SRV record here if API keys provided
+
+    # Update Cloudflare SRV record if configured
     if CF_API_TOKEN and CF_ZONE_ID and remote_port:
-        print(f"[{session_id}] (Mock) Updating Cloudflare SRV record _minecraft._tcp.{username}.absoracloud.com -> bore.pub:{remote_port}")
-        
-    # 5. Start Game Process with prlimit
-    # Using nice + prlimit to strictly enforce the "free penalty" cut
-    cmd = [
-        "prlimit", f"--as={actual_limit_bytes}",
-        "java", f"-Xmx{actual_limit_mb}M", f"-Xms{actual_limit_mb}M", "-jar", "server.jar", "nogui"
-    ]
-    # (Assuming you download server.jar here)
+        print(f"[{session_id}] (Mock) Updating Cloudflare SRV _minecraft._tcp.{username}.absoracloud.com -> bore.pub:{remote_port}")
+
+    # Accept EULA
     with open(f"{server_dir}/eula.txt", "w") as f:
         f.write("eula=true")
 
+    # Build Java command with Aikar's flags
+    aikar_flags = get_aikars_flags(ram_mb)
+    cmd = [
+        "prlimit", f"--as={ram_mb * 1024 * 1024}",
+        "java",
+    ] + aikar_flags + [
+        f"-Dserver.port={internal_port}",
+        "-jar", "server.jar", "nogui",
+    ]
+
+    # PTY for console streaming
     master_fd, slave_fd = pty.openpty()
-    
+
     try:
         proc = subprocess.Popen(
             cmd,
@@ -205,10 +413,10 @@ def start_game_server(task):
             stderr=slave_fd,
             cwd=server_dir,
             text=True,
-            bufsize=1
+            bufsize=1,
         )
         os.close(slave_fd)
-        
+
         active_sessions[session_id] = {
             "proc": proc,
             "master_fd": master_fd,
@@ -216,61 +424,125 @@ def start_game_server(task):
             "username": username,
             "game": game,
             "ram": requested_ram_str,
-            "cpu": requested_cpu
+            "cpu": requested_cpu,
+            "remote_port": remote_port,
         }
-        
-        print(f"[{session_id}] Server started successfully.")
+
+        print(f"[{session_id}] Server started successfully (PID: {proc.pid}).")
+
+        # Wait for process to exit, then clean up
+        proc.wait()
+        print(f"[{session_id}] Server process exited with code {proc.returncode}.")
+        if session_id in active_sessions:
+            stop_session(session_id, reason="process_exited")
+
     except Exception as e:
         print(f"[{session_id}] Failed to start: {e}")
+        # Release resources on failure
+        try:
+            os.close(master_fd)
+        except Exception:
+            pass
+        try:
+            os.close(slave_fd)
+        except Exception:
+            pass
+        with resource_lock:
+            used_ram -= requested_ram_gb
+            used_cpu -= requested_cpu
+            used_ram = max(0, used_ram)
+            used_cpu = max(0, used_cpu)
+
+
+# ── WebSocket Console Handler ──
 
 async def handle_client(websocket):
-    # This multiplexes the console streams back to Vercel/Frontend
-    # Expects client to send {"session_id": "..."} to connect to a specific console
+    """Multiplexes console streams to frontend clients via WebSocket."""
     try:
         auth_msg = await websocket.recv()
         auth_data = json.loads(auth_msg)
-        session_id = auth_data.get('session_id')
-        
+        session_id = auth_data.get("session_id")
+
         if session_id not in active_sessions:
             await websocket.send(json.dumps({"type": "error", "message": "Session not active on this runner."}))
             return
-            
+
         sess = active_sessions[session_id]
         master_fd = sess["master_fd"]
         proc = sess["proc"]
-        
+
         async def read_stdout():
             try:
-                while proc.poll() is None:
+                while proc.poll() is None and not shutting_down:
                     rlist, _, _ = select.select([master_fd], [], [], 0.1)
                     if rlist:
-                        chunk = os.read(master_fd, 4096).decode('utf-8', errors='replace')
+                        chunk = os.read(master_fd, 4096).decode("utf-8", errors="replace")
                         if chunk:
                             await websocket.send(json.dumps({"type": "message", "data": chunk}))
                     await asyncio.sleep(0.01)
             except Exception:
                 pass
-                
+
         asyncio.create_task(read_stdout())
-        
+
         async for message in websocket:
             data = json.loads(message)
             if data.get("type") == "command":
                 cmd = data.get("command", "") + "\n"
-                proc.stdin.write(cmd)
-                proc.stdin.flush()
-                
+                try:
+                    proc.stdin.write(cmd)
+                    proc.stdin.flush()
+                except Exception:
+                    pass
+
     except websockets.exceptions.ConnectionClosed:
         pass
     except Exception as e:
         print(f"WebSocket error: {e}")
+
+
+# ── Graceful Shutdown ──
+
+def graceful_shutdown(signum=None, frame=None):
+    global shutting_down
+    if shutting_down:
+        return
+    shutting_down = True
+
+    print("\n=== GRACEFUL SHUTDOWN INITIATED ===")
+
+    # Stop all active game sessions
+    session_ids = list(active_sessions.keys())
+    for s_id in session_ids:
+        print(f"Stopping session: {s_id}")
+        stop_session(s_id, reason="runner_shutdown")
+
+    # Deregister VM from the API
+    if registered_vm_id:
+        print(f"Deregistering VM: {registered_vm_id}")
+        api_call(API_URL, {"op": "deregister_vm", "vm_id": registered_vm_id})
+
+    print("=== SHUTDOWN COMPLETE ===")
+    os._exit(0)
+
+
+# ── Main ──
 
 async def main_loop():
     server = await websockets.serve(handle_client, "0.0.0.0", PORT)
     print(f"Console WebSocket server started on port {PORT}")
     await asyncio.Future()
 
+
 if __name__ == "__main__":
     print("AbsoraCloud Python Daemon Booting...")
+    print(f"  Runner ID:  {RUNNER_ID}")
+    print(f"  API:        {BASE_URL}")
+    print(f"  Capacity:   {TOTAL_CPU} vCPU, {TOTAL_RAM_GB}GB RAM")
+
+    # Register signal handlers for graceful shutdown
+    signal.signal(signal.SIGTERM, graceful_shutdown)
+    signal.signal(signal.SIGINT, graceful_shutdown)
+
     threading.Thread(target=start_tunnel, daemon=True).start()
     asyncio.run(main_loop())

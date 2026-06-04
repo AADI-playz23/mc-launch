@@ -13,6 +13,21 @@
         .queued { background: #f59e0b20; color: #f59e0b; border: 1px solid #f59e0b; }
         .connected { background: #10b98120; color: #10b981; border: 1px solid #10b981; }
         .btn { padding: 0.5rem 1rem; background: #8b5cf6; color: white; border: none; border-radius: 6px; cursor: pointer; }
+        
+        .tabs { display: flex; background: #13131f; border-bottom: 1px solid #2d2d3f; }
+        .tab { padding: 1rem 2rem; cursor: pointer; color: #94a3b8; font-weight: bold; border-bottom: 2px solid transparent; }
+        .tab.active { color: #8b5cf6; border-bottom-color: #8b5cf6; background: #000000; }
+        .tab-content { display: none; flex: 1; overflow-y: auto; background: #05050a; }
+        .tab-content.active { display: block; }
+        #terminal-container { display: none; flex: 1; padding: 1rem; background: black; }
+        #terminal-container.active { display: block; }
+        
+        /* Settings Form */
+        .settings-panel { padding: 2rem; max-width: 600px; margin: 0 auto; color: white; }
+        .form-group { margin-bottom: 1.5rem; }
+        .form-group label { display: block; margin-bottom: 0.5rem; color: #94a3b8; font-size: 0.9rem; font-weight: bold; text-transform: uppercase; }
+        .form-group select { width: 100%; padding: 0.9rem; background: #020205; border: 1px solid #2d2d3f; border-radius: 6px; color: white; font-family: inherit; font-size: 1rem; }
+        .alert { padding: 1rem; background: #f59e0b20; color: #f59e0b; border: 1px solid #f59e0b; border-radius: 6px; margin-bottom: 1.5rem; }
     </style>
 </head>
 <body>
@@ -24,7 +39,43 @@
             <button class="btn" style="margin-left: 1rem;" onclick="location.href='dashboard.html'">Back to Dashboard</button>
         </div>
     </div>
-    <div id="terminal-container"></div>
+    </div>
+    
+    <div class="tabs">
+        <div class="tab active" id="tab-term" onclick="switchTab('term')">Terminal Console</div>
+        <div class="tab" id="tab-version" onclick="switchTab('version')">Version Settings</div>
+    </div>
+    
+    <div id="terminal-container" class="active"></div>
+    
+    <div id="version-container" class="tab-content">
+        <div class="settings-panel">
+            <div class="alert">
+                <strong>Notice:</strong> Changing your software or version will wipe your current server JAR file. You MUST type <code>stop</code> in the console after updating to restart your server!
+            </div>
+            <div class="form-group">
+                <label>Software / Distribution</label>
+                <select id="s-edit" onchange="loadEditVersions()">
+                    <option value="paper">PaperMC</option>
+                    <option value="fabric">Fabric</option>
+                    <option value="forge">Forge</option>
+                    <option value="high_performance">High Performance</option>
+                    <option value="hybrid">Hybrid</option>
+                    <option value="proxies">Proxies</option>
+                    <option value="purpur">Purpur</option>
+                    <option value="quilt">Quilt</option>
+                    <option value="spigot">Spigot</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Version</label>
+                <select id="v-edit">
+                    <option value="latest">Loading...</option>
+                </select>
+            </div>
+            <button class="btn" style="width: 100%; font-size: 1.1rem; padding: 1rem;" id="update-btn" onclick="updateSoftware()">Update Server</button>
+        </div>
+    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
@@ -157,6 +208,86 @@
             term.writeln('\x1b[1;31m[Error]\x1b[0m No Instance ID provided.');
         } else {
             bootServer();
+        }
+
+        function switchTab(tabId) {
+            document.getElementById('tab-term').classList.remove('active');
+            document.getElementById('tab-version').classList.remove('active');
+            document.getElementById('terminal-container').classList.remove('active');
+            document.getElementById('version-container').classList.remove('active');
+            
+            if (tabId === 'term') {
+                document.getElementById('tab-term').classList.add('active');
+                document.getElementById('terminal-container').classList.add('active');
+                if (fitAddon) fitAddon.fit();
+            } else {
+                document.getElementById('tab-version').classList.add('active');
+                document.getElementById('version-container').classList.add('active');
+                if (document.getElementById('v-edit').options.length <= 1) {
+                    loadEditVersions(); // load on first open
+                }
+            }
+        }
+
+        async function loadEditVersions() {
+            const select = document.getElementById('s-edit');
+            const versionSelect = document.getElementById('v-edit');
+            const software = select.value;
+            
+            versionSelect.innerHTML = '<option value="latest">Loading...</option>';
+            versionSelect.disabled = true;
+            
+            try {
+                const res = await fetch(`/api/software?type=${software}`);
+                if (!res.ok) throw new Error("API error");
+                const data = await res.json();
+                
+                if (data.status !== "success") throw new Error(data.message);
+                
+                versionSelect.innerHTML = '';
+                if (data.latest) {
+                    versionSelect.innerHTML += `<option value="latest">Latest (${data.latest})</option>`;
+                }
+                
+                if (data.versions && data.versions.length > 0) {
+                    for (const ver of data.versions) {
+                        versionSelect.innerHTML += `<option value="${ver}">${ver}</option>`;
+                    }
+                }
+            } catch(e) {
+                console.error("Failed to load versions:", e);
+                versionSelect.innerHTML = '<option value="latest">Latest</option>';
+            } finally {
+                versionSelect.disabled = false;
+            }
+        }
+
+        async function updateSoftware() {
+            const btn = document.getElementById('update-btn');
+            const software = document.getElementById('s-edit').value;
+            const version = document.getElementById('v-edit').value;
+            
+            btn.innerText = 'Updating...';
+            btn.disabled = true;
+            
+            try {
+                const res = await fetch('/api/instances', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ instance_id: parseInt(instanceId), software, version })
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    alert('Successfully updated! Please switch to the Terminal tab and type "stop" to restart your server with the new software.');
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            } catch(e) {
+                alert('Network error while updating.');
+            } finally {
+                btn.innerText = 'Update Server';
+                btn.disabled = false;
+            }
         }
     </script>
 </body>
