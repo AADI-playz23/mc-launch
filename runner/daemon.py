@@ -157,7 +157,8 @@ def download_server_data(username, instance_id, server_dir):
         print(f"[{instance_id}] Persistence download failed: {e}")
 
 def upload_server_data(username, instance_id, server_dir):
-    import hashlib
+    import cloudinary
+    import cloudinary.uploader
     print(f"[{instance_id}] Saving persistence to Cloudinary...")
     cld = parse_cloudinary_url()
     if not cld:
@@ -167,29 +168,33 @@ def upload_server_data(username, instance_id, server_dir):
     tar_path = f"/home/runner/backups/server_{instance_id}.tar.gz"
     
     try:
+        # Docker runs as root, so files inside server_dir might be owned by root.
+        # We need to take ownership before we can tar them!
+        subprocess.run(["sudo", "chown", "-R", f"{os.getuid()}:{os.getgid()}", server_dir])
+        
         # Compress server directory
         subprocess.run(["tar", "-czf", tar_path, "-C", server_dir, "."])
 
         public_id = f"absora/{username}/{instance_id}/server.tar.gz"
-        timestamp = int(time.time())
-        to_sign = f"public_id={public_id}&timestamp={timestamp}{cld['api_secret']}"
-        signature = hashlib.sha1(to_sign.encode('utf-8')).hexdigest()
         
-        url = f"https://api.cloudinary.com/v1_1/{cld['cloud_name']}/raw/upload"
-        data = {
-            "api_key": cld['api_key'],
-            "timestamp": timestamp,
-            "public_id": public_id,
-            "signature": signature
-        }
+        cloudinary.config(
+            cloud_name=cld['cloud_name'],
+            api_key=cld['api_key'],
+            api_secret=cld['api_secret']
+        )
         
-        with open(tar_path, 'rb') as f:
-            resp = requests.post(url, data=data, files={"file": f})
-            
-        if resp.ok:
+        print(f"[{instance_id}] Uploading large file in chunks...")
+        resp = cloudinary.uploader.upload_large(
+            tar_path,
+            resource_type="raw",
+            public_id=public_id,
+            chunk_size=20000000 # 20MB chunks
+        )
+        
+        if resp.get('public_id'):
             print(f"[{instance_id}] Persistence saved to Cloudinary successfully.")
         else:
-            print(f"[{instance_id}] Persistence upload failed: {resp.text}")
+            print(f"[{instance_id}] Persistence upload failed: {resp}")
 
     except Exception as e:
         print(f"[{instance_id}] Persistence upload failed: {e}")
