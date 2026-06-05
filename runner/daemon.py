@@ -399,8 +399,8 @@ def start_game_server(task):
     instance_id = task.get("instance_id", session_id)
     username = task["username"]
     servername = task.get("servername", f"srv-{instance_id}")
-    game = task.get("game", "minecraft")
-    software = task.get("software", "paper")
+    game = task.get("game", "minecraft").lower()
+    software = task.get("software", "paper").lower()
     version = task.get("version", "latest")
     requested_ram_str = task.get("ram", "4G")
     requested_cpu = task.get("cpu", 1)
@@ -458,6 +458,9 @@ def start_game_server(task):
                 print(f"[{session_id}] Version {target_version} not found in {software}.json")
         else:
             print(f"[{session_id}] Failed to find {software}.json locally at {json_path}")
+            # Write a dummy server.jar to explain the error to the user via docker output
+            with open(f"{server_dir}/server.jar", "w") as f:
+                f.write("Download failed: Software JSON metadata not found.")
     except Exception as e:
         print(f"[{session_id}] Error during JAR download: {e}")
 
@@ -588,6 +591,7 @@ def start_game_server(task):
             "master_fd": master_fd,
             "bore_proc": bore_proc,
             "username": username,
+            "servername": servername,
             "instance_id": instance_id,
             "game": game,
             "ram": requested_ram_str,
@@ -724,9 +728,12 @@ async def handle_client(websocket):
                 path = data.get("path", "")
                 full_path = os.path.join(f"/home/runner/servers/server_{sess.get('instance_id')}", path.lstrip("/"))
                 try:
-                    with open(full_path, "r", encoding="utf-8") as f:
-                        content = f.read()
-                    await websocket.send(json.dumps({"type": "file_read_result", "path": path, "content": content}))
+                    if not os.path.exists(full_path) and path == "server.properties":
+                        await websocket.send(json.dumps({"type": "file_read_result", "path": path, "content": ""}))
+                    else:
+                        with open(full_path, "r", encoding="utf-8") as f:
+                            content = f.read()
+                        await websocket.send(json.dumps({"type": "file_read_result", "path": path, "content": content}))
                 except Exception as e:
                     await websocket.send(json.dumps({"type": "file_error", "message": str(e)}))
             elif msg_type == "file_write":
