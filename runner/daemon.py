@@ -631,7 +631,7 @@ async def handle_client(websocket):
         token = auth_data.get("token")
         
         # Verify JWT via Vercel API
-        res = api_call(API_URL, {"op": "validate_ws_token", "token": token})
+        res = api_call(API_URL, {"op": "validate_ws_token", "token": token, "vm_id": registered_vm_id})
         if not res or res.get("valid") is not True:
             await websocket.send(json.dumps({"type": "error", "message": "Invalid authentication token."}))
             return
