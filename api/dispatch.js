@@ -6,7 +6,7 @@ import { getRamGb, getCpu, getSessionDurationSecs } from './_lib/plans.js';
 const MAX_VM_RAM_GB = 16;
 const MAX_VM_CPU = 4;
 const MAX_ACTIVE_RUNNERS = 5;
-const VM_HEARTBEAT_STALE_SECS = 180;
+const VM_HEARTBEAT_STALE_SECS = 8;
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -31,6 +31,22 @@ export default async function handler(req, res) {
       return sendError(res, 404, 'Instance not found');
     }
     const instance = instances[0];
+    const now = Math.floor(Date.now() / 1000);
+
+    // --- SELF HEALING: Clean up dead VMs ---
+    await executeD1(`
+      UPDATE sessions SET status = 'stopped' 
+      WHERE vm_id IN (SELECT vm_id FROM vms WHERE last_heartbeat < ?) 
+      AND status IN ('assigned', 'booting', 'running')`, 
+      [now - VM_HEARTBEAT_STALE_SECS]
+    );
+    await executeD1("DELETE FROM vms WHERE last_heartbeat < ?", [now - VM_HEARTBEAT_STALE_SECS]);
+    // ---------------------------------------
+
+    if (force_trigger) {
+      await executeD1("UPDATE sessions SET status = 'stopped' WHERE instance_id = ? AND status IN ('pending', 'queued', 'assigned', 'booting', 'running')", [instance_id]);
+      return sendSuccess(res, { message: 'Session forcefully cleared' });
+    }
 
     // 2. Check if this instance already has an active session
     const activeSessions = await queryD1(
@@ -60,7 +76,6 @@ export default async function handler(req, res) {
     const required_cpu = getCpu(user.plan);
     const sessionDuration = getSessionDurationSecs(user.plan);
 
-    const now = Math.floor(Date.now() / 1000);
     const expires_at = now + sessionDuration;
     const session_id = `sess_${Math.random().toString(36).substring(2, 14)}`;
 

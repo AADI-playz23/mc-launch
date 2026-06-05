@@ -82,6 +82,14 @@ export default async function handler(req, res) {
         return sendSuccess(res, { message: 'Session stopped' });
     }
 
+    if (op === 'session_running') {
+        const { session_id } = req.body;
+        if (session_id) {
+            await executeD1("UPDATE sessions SET status = 'running' WHERE session_id = ?", [session_id]);
+        }
+        return sendSuccess(res, { message: 'Session running' });
+    }
+
     if (op === 'validate_ws_token') {
       const { token } = req.body;
       if (!token) return sendError(res, 400, 'token required');

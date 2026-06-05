@@ -75,9 +75,9 @@ export default async function handler(req, res) {
       return sendSuccess(res, { task: null });
     }
 
-    // Mark as running so it isn't picked up again
+    // Mark as booting so it isn't picked up again, and the frontend waits for daemon to finish setup
     await executeD1(
-      "UPDATE sessions SET status = 'running' WHERE session_id = ?",
+      "UPDATE sessions SET status = 'booting' WHERE session_id = ?",
       [task.session_id]
     );
 

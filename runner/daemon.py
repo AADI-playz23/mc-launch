@@ -271,7 +271,7 @@ def heartbeat_and_poll_loop():
         except Exception as e:
             print(f"Heartbeat/Poll loop exception: {e}")
 
-        time.sleep(10)
+        time.sleep(2)
 
 
 # ── Session Management ──
@@ -594,6 +594,9 @@ def start_game_server(task):
         }
 
         print(f"[{session_id}] Server started successfully (PID: {proc.pid}).")
+        
+        # Now that the session is active, tell Vercel it's running so the frontend can connect!
+        api_call(API_URL, {"op": "session_running", "session_id": session_id})
 
         # Wait for process to exit, then clean up
         proc.wait()

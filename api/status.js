@@ -1,4 +1,4 @@
-import { queryD1 } from './_lib/db.js';
+import { queryD1, executeD1 } from './_lib/db.js';
 import { requireAuth, sendSuccess, sendError } from './_lib/middleware.js';
 
 export default async function handler(req, res) {
@@ -15,6 +15,19 @@ export default async function handler(req, res) {
   }
 
   try {
+    const now = Math.floor(Date.now() / 1000);
+    const VM_HEARTBEAT_STALE_SECS = 8;
+
+    // --- SELF HEALING: Clean up dead VMs ---
+    await executeD1(`
+      UPDATE sessions SET status = 'stopped' 
+      WHERE vm_id IN (SELECT vm_id FROM vms WHERE last_heartbeat < ?) 
+      AND status IN ('assigned', 'booting', 'running')`, 
+      [now - VM_HEARTBEAT_STALE_SECS]
+    );
+    await executeD1("DELETE FROM vms WHERE last_heartbeat < ?", [now - VM_HEARTBEAT_STALE_SECS]);
+    // ---------------------------------------
+
     const sessions = await queryD1(
       'SELECT s.session_id, s.status, s.expires_at, s.started_at, v.worker_url FROM sessions s LEFT JOIN vms v ON s.vm_id = v.vm_id WHERE s.session_id = ? AND s.username = ?',
       [session_id, user.username]
@@ -25,7 +38,6 @@ export default async function handler(req, res) {
     }
 
     const session = sessions[0];
-    const now = Math.floor(Date.now() / 1000);
 
     let status = session.status;
     if (status === 'running' && session.expires_at && session.expires_at < now) {
