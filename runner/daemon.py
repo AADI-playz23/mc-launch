@@ -470,20 +470,9 @@ def start_game_server(task):
     internal_port = s.getsockname()[1]
     s.close()
     
-    # Check if bore server is running, if not start it
-    global bored_proc
-    if 'bored_proc' not in globals() or bored_proc.poll() is not None:
-        print(f"[{session_id}] Starting local bore server...")
-        bored_proc = subprocess.Popen(
-            ["bore", "server"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-        time.sleep(1) # wait for bore server to bind
-
-    # Start Bore Tunnel to local bored
+    # Start Bore Tunnel to public bore.pub
     bore_proc = subprocess.Popen(
-        ["bore", "local", str(internal_port), "--to", "localhost"],
+        ["bore", "local", str(internal_port), "--to", "bore.pub"],
         stdout=subprocess.PIPE,
         text=True,
     )
