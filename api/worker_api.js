@@ -1,5 +1,8 @@
 import { queryD1, executeD1 } from './_lib/db.js';
 import { requireWorkerAuth, sendSuccess, sendError, validateBody } from './_lib/middleware.js';
+import jwt from 'jsonwebtoken';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return sendError(res, 405, 'Method not allowed');
@@ -77,6 +80,17 @@ export default async function handler(req, res) {
             await executeD1("UPDATE sessions SET status = 'stopped' WHERE session_id = ?", [session_id]);
         }
         return sendSuccess(res, { message: 'Session stopped' });
+    }
+
+    if (op === 'validate_ws_token') {
+      const { token } = req.body;
+      if (!token) return sendError(res, 400, 'token required');
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        return sendSuccess(res, { valid: true, payload: decoded });
+      } catch (err) {
+        return sendSuccess(res, { valid: false, error: err.message });
+      }
     }
 
     return sendError(res, 400, 'Invalid operation');

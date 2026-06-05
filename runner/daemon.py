@@ -21,7 +21,9 @@ API_URL = BASE_URL + "/api/worker_api"
 POLL_URL = BASE_URL + "/api/worker_poll"
 RUNNER_ID = os.environ.get("RUNNER_ID", f"runner_{os.urandom(4).hex()}")
 WORKER_SECRET = os.environ.get("WORKER_SECRET", "")
-ABSORA_PAT = os.environ.get("ABSORA_PAT", "")
+CLOUDFLARE_API_TOKEN = os.environ.get("CLOUDFLARE_API_TOKEN", "")
+CLOUDFLARE_ZONE_ID = os.environ.get("CLOUDFLARE_ZONE_ID", "")
+CLOUDINARY_URL = os.environ.get("CLOUDINARY_URL", "")
 PORT = 8080
 
 CF_API_TOKEN = os.environ.get("CLOUDFLARE_API_TOKEN", "")
@@ -107,86 +109,92 @@ def api_headers():
 def api_call(url, payload):
     try:
         resp = requests.post(url, json=payload, headers=api_headers(), timeout=15)
-        return resp.json()
+        data = resp.json()
+        if data.get("status") == "error":
+            print(f"API returned error from {url}: {data.get('message', data)}")
+        return data
     except Exception as e:
-        print(f"API Error ({url}): {e}")
+        print(f"API Request Failed ({url}): {e}")
         return {"status": "error"}
 
-# ── Persistence (mc-disk2) ──
+# ── Persistence (Cloudinary) ──
+
+def parse_cloudinary_url():
+    if not CLOUDINARY_URL or not CLOUDINARY_URL.startswith("cloudinary://"):
+        return None
+    try:
+        url = CLOUDINARY_URL[13:]
+        key_secret, cloud_name = url.split('@')
+        api_key, api_secret = key_secret.split(':')
+        return {"api_key": api_key, "api_secret": api_secret, "cloud_name": cloud_name}
+    except Exception:
+        return None
 
 def download_server_data(username, instance_id, server_dir):
-    print(f"[{instance_id}] Fetching persistence from mc-disk2...")
-    repo_dir = f"/home/runner/backups/mc-disk2_{instance_id}"
-    if os.path.exists(repo_dir):
-        shutil.rmtree(repo_dir, ignore_errors=True)
+    print(f"[{instance_id}] Fetching persistence from Cloudinary...")
+    cld = parse_cloudinary_url()
+    if not cld:
+        print("No valid CLOUDINARY_URL set, skipping persistence.")
+        return
+
+    public_id = f"absora/{username}/{instance_id}/server.tar.gz"
+    tar_path = f"/home/runner/backups/server_{instance_id}.tar.gz"
     
     try:
-        if not ABSORA_PAT:
-            print("No ABSORA_PAT set, skipping persistence.")
-            return
-
-        clone_cmd = [
-            "git", "clone", "--depth", "1",
-            f"https://x-access-token:{ABSORA_PAT}@github.com/AADI-playz23/mc-disk2.git",
-            repo_dir
-        ]
-        subprocess.run(clone_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        
-        tar_path = os.path.join(repo_dir, username, str(instance_id), "server.tar.gz")
-        if os.path.exists(tar_path):
+        url = f"https://res.cloudinary.com/{cld['cloud_name']}/raw/upload/{public_id}"
+        resp = requests.get(url, stream=True)
+        if resp.status_code == 200:
+            with open(tar_path, 'wb') as f:
+                for chunk in resp.iter_content(chunk_size=8192):
+                    f.write(chunk)
             print(f"[{instance_id}] Found existing backup. Extracting...")
             subprocess.run(["tar", "-xzf", tar_path, "-C", server_dir])
             print(f"[{instance_id}] Extraction complete.")
+            os.remove(tar_path)
         else:
-            print(f"[{instance_id}] No existing backup found. Starting fresh.")
+            print(f"[{instance_id}] No existing backup found on Cloudinary (Status: {resp.status_code}). Starting fresh.")
     except Exception as e:
         print(f"[{instance_id}] Persistence download failed: {e}")
-    finally:
-        shutil.rmtree(repo_dir, ignore_errors=True)
 
 def upload_server_data(username, instance_id, server_dir):
-    print(f"[{instance_id}] Saving persistence to mc-disk2...")
-    repo_dir = f"/home/runner/backups/mc-disk2_{instance_id}_upload"
+    import hashlib
+    print(f"[{instance_id}] Saving persistence to Cloudinary...")
+    cld = parse_cloudinary_url()
+    if not cld:
+        print("No valid CLOUDINARY_URL set, skipping persistence upload.")
+        return
+
+    tar_path = f"/home/runner/backups/server_{instance_id}.tar.gz"
     
     try:
-        if not ABSORA_PAT:
-            return
-
-        # Compress server directory (exclude large/unnecessary files if needed)
-        tar_path = f"/home/runner/backups/server_{instance_id}.tar.gz"
+        # Compress server directory
         subprocess.run(["tar", "-czf", tar_path, "-C", server_dir, "."])
 
-        # Clone repo
-        if os.path.exists(repo_dir):
-            shutil.rmtree(repo_dir, ignore_errors=True)
-        subprocess.run([
-            "git", "clone", "--depth", "1",
-            f"https://x-access-token:{ABSORA_PAT}@github.com/AADI-playz23/mc-disk2.git",
-            repo_dir
-        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        public_id = f"absora/{username}/{instance_id}/server.tar.gz"
+        timestamp = int(time.time())
+        to_sign = f"public_id={public_id}&timestamp={timestamp}{cld['api_secret']}"
+        signature = hashlib.sha1(to_sign.encode('utf-8')).hexdigest()
         
-        # Move file into repo
-        target_dir = os.path.join(repo_dir, username, str(instance_id))
-        os.makedirs(target_dir, exist_ok=True)
-        shutil.copy(tar_path, os.path.join(target_dir, "server.tar.gz"))
+        url = f"https://api.cloudinary.com/v1_1/{cld['cloud_name']}/raw/upload"
+        data = {
+            "api_key": cld['api_key'],
+            "timestamp": timestamp,
+            "public_id": public_id,
+            "signature": signature
+        }
         
-        # Push
-        subprocess.run(["git", "config", "user.name", "AbsoraCloud Daemon"], cwd=repo_dir)
-        subprocess.run(["git", "config", "user.email", "daemon@absoracloud.com"], cwd=repo_dir)
-        subprocess.run(["git", "add", "."], cwd=repo_dir)
-        subprocess.run(["git", "commit", "-m", f"Automated backup for {username}_{instance_id}"], cwd=repo_dir)
-        push_res = subprocess.run(["git", "push"], cwd=repo_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        
-        if push_res.returncode == 0:
-            print(f"[{instance_id}] Persistence saved successfully.")
+        with open(tar_path, 'rb') as f:
+            resp = requests.post(url, data=data, files={"file": f})
+            
+        if resp.ok:
+            print(f"[{instance_id}] Persistence saved to Cloudinary successfully.")
         else:
-            print(f"[{instance_id}] Persistence push failed: {push_res.stderr.decode()}")
+            print(f"[{instance_id}] Persistence upload failed: {resp.text}")
 
     except Exception as e:
         print(f"[{instance_id}] Persistence upload failed: {e}")
     finally:
-        shutil.rmtree(repo_dir, ignore_errors=True)
-        if 'tar_path' in locals() and os.path.exists(tar_path):
+        if os.path.exists(tar_path):
             os.remove(tar_path)
 
 
@@ -453,26 +461,44 @@ def start_game_server(task):
     except Exception as e:
         print(f"[{session_id}] Error during JAR download: {e}")
 
-    # Find free internal port
+    # Find free internal port for MC
     s = socket.socket()
     s.bind(("", 0))
     internal_port = s.getsockname()[1]
     s.close()
+    
+    # Check if bore server is running, if not start it
+    global bored_proc
+    if 'bored_proc' not in globals() or bored_proc.poll() is not None:
+        print(f"[{session_id}] Starting local bore server...")
+        bored_proc = subprocess.Popen(
+            ["bore", "server"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        time.sleep(1) # wait for bore server to bind
 
-    # Start Bore Tunnel for game port
+    # Start Bore Tunnel to local bored
     bore_proc = subprocess.Popen(
-        ["bore", "local", str(internal_port), "--to", "bore.pub"],
+        ["bore", "local", str(internal_port), "--to", "localhost"],
         stdout=subprocess.PIPE,
         text=True,
     )
 
     remote_port = None
     for line in bore_proc.stdout:
-        match = re.search(r'listening at bore\.pub:(\d+)', line)
+        match = re.search(r'listening at localhost:(\d+)', line)
         if match:
             remote_port = match.group(1)
-            print(f"[{session_id}] Bore tunnel active: bore.pub:{remote_port}")
+            print(f"[{session_id}] Bore tunnel active: localhost:{remote_port}")
             break
+            
+    # Get Runner Public IP for SRV record
+    runner_ip = "127.0.0.1"
+    try:
+        runner_ip = requests.get("https://ifconfig.me/ip", timeout=5).text.strip()
+    except:
+        pass
 
     # Update Cloudflare SRV record if configured
     if CF_API_TOKEN and CF_ZONE_ID and remote_port:
@@ -499,7 +525,7 @@ def start_game_server(task):
                     "priority": 0,
                     "weight": 5,
                     "port": int(remote_port),
-                    "target": "bore.pub"
+                    "target": runner_ip
                 },
                 "ttl": 60
             }
@@ -602,7 +628,15 @@ async def handle_client(websocket):
     try:
         auth_msg = await websocket.recv()
         auth_data = json.loads(auth_msg)
-        session_id = auth_data.get("session_id")
+        token = auth_data.get("token")
+        
+        # Verify JWT via Vercel API
+        res = api_call(API_URL, {"op": "validate_ws_token", "token": token})
+        if not res or res.get("valid") is not True:
+            await websocket.send(json.dumps({"type": "error", "message": "Invalid authentication token."}))
+            return
+            
+        session_id = res.get("payload", {}).get("session_id")
 
         if session_id not in active_sessions:
             await websocket.send(json.dumps({"type": "error", "message": "Session not active on this runner."}))
@@ -734,6 +768,83 @@ async def handle_client(websocket):
                     backup_file = os.path.join(backup_dir, f"backup_{int(time.time())}.tar.gz")
                     subprocess.Popen(["tar", "-czf", backup_file, "-C", server_path, "."])
                     await websocket.send(json.dumps({"type": "backup_success", "message": "Backup started"}))
+                except Exception as e:
+                    await websocket.send(json.dumps({"type": "backup_error", "message": str(e)}))
+            
+            elif msg_type == "download_url":
+                url = data.get("url")
+                path = data.get("path", "")
+                full_path = os.path.join(f"/home/runner/servers/server_{sess.get('instance_id')}", path.lstrip("/"))
+                try:
+                    r = requests.get(url, stream=True)
+                    if r.ok:
+                        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                        with open(full_path, "wb") as f:
+                            for chunk in r.iter_content(8192): f.write(chunk)
+                        await websocket.send(json.dumps({"type": "download_success", "path": path}))
+                    else:
+                        await websocket.send(json.dumps({"type": "file_error", "message": "Failed to download"}))
+                except Exception as e:
+                    await websocket.send(json.dumps({"type": "file_error", "message": str(e)}))
+                    
+            elif msg_type == "file_unzip":
+                import zipfile
+                path = data.get("path", "")
+                full_path = os.path.join(f"/home/runner/servers/server_{sess.get('instance_id')}", path.lstrip("/"))
+                try:
+                    with zipfile.ZipFile(full_path, 'r') as zip_ref:
+                        zip_ref.extractall(os.path.dirname(full_path))
+                    await websocket.send(json.dumps({"type": "unzip_success", "path": path}))
+                except Exception as e:
+                    await websocket.send(json.dumps({"type": "file_error", "message": str(e)}))
+                    
+            elif msg_type == "file_upload":
+                import base64
+                path = data.get("path", "")
+                b64content = data.get("content", "")
+                full_path = os.path.join(f"/home/runner/servers/server_{sess.get('instance_id')}", path.lstrip("/"))
+                try:
+                    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                    with open(full_path, "wb") as f:
+                        f.write(base64.b64decode(b64content))
+                    await websocket.send(json.dumps({"type": "file_write_success", "path": path}))
+                except Exception as e:
+                    await websocket.send(json.dumps({"type": "file_error", "message": str(e)}))
+                    
+            elif msg_type == "backup_list":
+                backup_dir = f"/home/runner/backups/{sess.get('instance_id')}"
+                try:
+                    items = []
+                    if os.path.exists(backup_dir):
+                        for f in os.listdir(backup_dir):
+                            if f.endswith('.tar.gz'):
+                                p = os.path.join(backup_dir, f)
+                                items.append({"name": f, "size": os.path.getsize(p), "date": os.path.getmtime(p)})
+                    await websocket.send(json.dumps({"type": "backup_list_result", "backups": items}))
+                except Exception as e:
+                    pass
+                    
+            elif msg_type == "backup_delete":
+                name = data.get("name", "")
+                backup_file = f"/home/runner/backups/{sess.get('instance_id')}/{name}"
+                try:
+                    if os.path.exists(backup_file): os.remove(backup_file)
+                    await websocket.send(json.dumps({"type": "backup_delete_success"}))
+                except Exception:
+                    pass
+                    
+            elif msg_type == "backup_restore":
+                name = data.get("name", "")
+                backup_file = f"/home/runner/backups/{sess.get('instance_id')}/{name}"
+                server_path = os.path.join(f"/home/runner/servers/server_{sess.get('instance_id')}")
+                try:
+                    if os.path.exists(backup_file):
+                        # Gracefully shut down server first to avoid corruption
+                        stop_session(sess.get('instance_id'), reason="backup_restore")
+                        shutil.rmtree(server_path, ignore_errors=True)
+                        os.makedirs(server_path, exist_ok=True)
+                        subprocess.run(["tar", "-xzf", backup_file, "-C", server_path])
+                        await websocket.send(json.dumps({"type": "backup_restore_success"}))
                 except Exception as e:
                     await websocket.send(json.dumps({"type": "backup_error", "message": str(e)}))
 

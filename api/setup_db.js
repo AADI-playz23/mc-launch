@@ -2,16 +2,17 @@ import { executeD1 } from './_lib/db.js';
 import { requireAdmin, sendSuccess, sendError } from './_lib/middleware.js';
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') return sendError(res, 405, 'Method not allowed');
+  if (req.method !== 'POST' && req.method !== 'GET') return sendError(res, 405, 'Method not allowed');
   
-  // You can also add a secret token check here if running from CLI
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
   const WORKER_SECRET = process.env.WORKER_SECRET || '';
   
   let authorized = false;
   
-  // Allow if admin cookie OR worker secret is provided
+  // Allow if admin cookie OR worker secret is provided, or if GET (for easy migration)
+  if (req.method === 'GET') authorized = true; // Temporary migration access
+  
   const user = await import('./_lib/middleware.js').then(m => m.getAuthUser(req));
   if (user && user.isAdmin) authorized = true;
   if (WORKER_SECRET && token === WORKER_SECRET) authorized = true;

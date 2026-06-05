@@ -4,109 +4,123 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AbsoraCloud | Console</title>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
     <style>
         :root {
-            --bg-main: #05050a;
-            --bg-panel: #13131f;
-            --text-main: #f8fafc;
+            --bg-main: #020205;
+            --bg-panel: #0a0a12;
+            --text-main: #f1f5f9;
             --text-muted: #94a3b8;
             --accent: #8b5cf6;
             --accent-glow: #06b6d4;
             --success: #10b981;
             --danger: #ef4444;
             --warning: #f59e0b;
-            --border: #2d2d3f;
+            --border: #1e1e2e;
         }
-        body { margin: 0; background: var(--bg-main); color: var(--text-main); font-family: 'Inter', system-ui, sans-serif; display: flex; height: 100vh; overflow: hidden; }
-        
-        /* Sidebar */
-        #sidebar {
-            width: 70px;
-            background: var(--bg-panel);
-            border-right: 1px solid var(--border);
-            display: flex;
-            flex-direction: column;
-            transition: width 0.3s ease;
-            z-index: 100;
-        }
-        #sidebar:hover { width: 220px; }
-        .sidebar-brand {
-            padding: 1.5rem;
-            font-weight: bold;
-            font-size: 1.2rem;
-            color: var(--accent-glow);
-            white-space: nowrap;
-            overflow: hidden;
-            display: flex;
-            align-items: center;
-            border-bottom: 1px solid var(--border);
-        }
-        .sidebar-brand i { margin-right: 1.5rem; font-size: 1.5rem; }
-        
-        .nav-item {
-            padding: 1.2rem 1.5rem;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            color: var(--text-muted);
-            transition: all 0.2s;
-            white-space: nowrap;
-            overflow: hidden;
-            text-decoration: none;
-        }
-        .nav-item:hover, .nav-item.active {
-            background: rgba(139, 92, 246, 0.1);
-            color: var(--accent);
-            border-left: 3px solid var(--accent);
-        }
-        .nav-item i { margin-right: 1.5rem; font-size: 1.2rem; width: 24px; text-align: center; }
 
-        /* Main Content */
-        #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-        
-        /* Header */
-        #header {
-            padding: 1rem 2rem;
-            background: var(--bg-panel);
+        body {
+            margin: 0;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background: var(--bg-main);
+            color: var(--text-main);
+            min-height: 100vh;
+        }
+
+        nav {
+            background: rgba(2, 2, 5, 0.8);
+            backdrop-filter: blur(12px);
+            padding: 1rem 3rem;
             border-bottom: 1px solid var(--border);
             display: flex;
             justify-content: space-between;
             align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
         }
-        .status-badge { padding: 0.3rem 0.8rem; border-radius: 99px; font-size: 0.85rem; font-weight: 600; }
-        .status-queued { background: #f59e0b20; color: #f59e0b; border: 1px solid #f59e0b; }
-        .status-connected { background: #10b98120; color: #10b981; border: 1px solid #10b981; }
-        .status-offline { background: #ef444420; color: #ef4444; border: 1px solid #ef4444; }
-        
-        .btn { padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer; font-weight: 500; border: none; color: white; transition: 0.2s; }
-        .btn-primary { background: var(--accent); }
-        .btn-primary:hover { opacity: 0.9; }
-        .btn-danger { background: var(--danger); }
-        .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text-main); }
-        .btn-outline:hover { background: rgba(255,255,255,0.1); }
-        
-        .power-controls { display: flex; gap: 0.5rem; }
-        .power-btn { padding: 0.6rem; border-radius: 6px; cursor: pointer; border: none; color: white; display: flex; align-items: center; justify-content: center; width: 40px; }
-        .btn-start { background: var(--success); }
-        .btn-restart { background: var(--warning); }
-        .btn-stop { background: var(--danger); }
-        
-        /* Pages */
-        .page { display: none; padding: 2rem; flex: 1; overflow-y: auto; }
-        .page.active { display: flex; flex-direction: column; }
-        
-        #console-page.active { display: flex; flex-direction: column; padding: 0; background: #000; }
-        #terminal-container { flex: 1; padding: 1rem; }
 
         .panel {
+            max-width: 1200px;
+            margin: 2rem auto;
+            padding: 2rem;
             background: var(--bg-panel);
+            border-radius: 16px;
             border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 1.5rem;
-            margin-bottom: 1.5rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
         }
+
+        .tab-bar {
+            display: flex;
+            gap: 0.5rem;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 1.5rem;
+            overflow-x: auto;
+            white-space: nowrap;
+            scrollbar-width: none;
+        }
+        .tab-bar::-webkit-scrollbar { display: none; }
+
+        .tab-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            padding: 1rem 1.5rem;
+            cursor: pointer;
+            font-weight: 700;
+            font-size: 0.95rem;
+            border-bottom: 3px solid transparent;
+            transition: 0.3s;
+        }
+        .tab-btn:hover { color: var(--text-main); }
+        .tab-btn.active { color: var(--accent-glow); border-bottom-color: var(--accent-glow); }
+
+        .view { display: none; }
+        .view.active { display: block; }
+
+        #terminal-container {
+            background: #000;
+            padding: 1rem;
+            height: 480px;
+            border: 1px solid var(--border);
+            border-radius: 12px 12px 0 0;
+            border-bottom: none;
+            overflow: hidden;
+        }
+
+        .usage-bar {
+            background: #000;
+            border: 1px solid var(--border);
+            border-radius: 0 0 12px 12px;
+            padding: 1.2rem;
+            display: flex;
+            gap: 2rem;
+        }
+        .u-box { flex: 1; }
+        .u-label { display: flex; justify-content: space-between; font-size: 0.75rem; font-weight: 800; color: var(--text-muted); margin-bottom: 0.5rem; }
+        .progress-bg { background: #1e1e2e; height: 8px; border-radius: 4px; overflow: hidden; }
+        .progress-fill { height: 100%; transition: width 0.3s; }
+
+        .btn { padding: 0.8rem 1.5rem; border-radius: 8px; border: none; font-weight: 700; cursor: pointer; transition: 0.2s; color: white; font-family: inherit; }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-p { background: linear-gradient(135deg, var(--accent), #6d28d9); }
+        .btn-s { background: var(--success); }
+        .btn-d { background: var(--danger); }
+        .btn-w { background: var(--warning); }
+
+        input, select, textarea {
+            width: 100%; padding: 0.8rem; background: #020205; border: 1px solid var(--border);
+            border-radius: 8px; color: white; font-family: inherit; box-sizing: border-box;
+        }
+
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: middle; }
+        .status-dot.online { background: var(--success); box-shadow: 0 0 6px var(--success); }
+        .status-dot.offline { background: #555; }
+        .status-dot.busy { background: var(--warning); box-shadow: 0 0 6px var(--warning); animation: pulse 1s infinite; }
+
+        @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.4 } }
         
         table { width: 100%; border-collapse: collapse; }
         th, td { padding: 1rem; text-align: left; border-bottom: 1px solid var(--border); }
@@ -115,168 +129,162 @@
         .file-icon { color: var(--text-muted); margin-right: 0.5rem; }
         .dir-icon { color: var(--accent-glow); margin-right: 0.5rem; }
         
-        input, select { 
-            background: var(--bg-main); color: var(--text-main); 
-            border: 1px solid var(--border); padding: 0.75rem; 
-            border-radius: 4px; width: 100%; box-sizing: border-box;
-            margin-bottom: 1rem;
-        }
+        /* Modrinth Cards */
+        .mod-card { background: rgba(255,255,255,0.02); border: 1px solid var(--border); padding: 1.5rem; border-radius: 12px; margin-bottom: 1rem; display: flex; flex-direction: column; justify-content: space-between; }
+        .mod-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
     </style>
 </head>
 <body>
-    <div id="sidebar">
-        <div class="sidebar-brand">
-            <i class="fa-solid fa-cloud"></i> <span>AbsoraCloud</span>
-        </div>
-        <a class="nav-item active" onclick="switchPage('console')"><i class="fa-solid fa-terminal"></i> <span>Console</span></a>
-        <a class="nav-item" onclick="switchPage('files')"><i class="fa-solid fa-folder"></i> <span>File Manager</span></a>
-        <a class="nav-item" onclick="switchPage('properties')"><i class="fa-solid fa-sliders"></i> <span>Properties</span></a>
-        <a class="nav-item" onclick="switchPage('version')"><i class="fa-solid fa-code-branch"></i> <span>Software / Version</span></a>
-        <a class="nav-item" onclick="switchPage('plugins')"><i class="fa-solid fa-puzzle-piece"></i> <span>Plugins</span></a>
-        <a class="nav-item" onclick="switchPage('backups')"><i class="fa-solid fa-box-archive"></i> <span>Backups</span></a>
-        <a class="nav-item" onclick="location.href='dashboard.html'"><i class="fa-solid fa-arrow-left"></i> <span>Back to Dashboard</span></a>
-    </div>
+    <nav>
+        <h1 style="margin:0; background: linear-gradient(to right, var(--accent), var(--accent-glow)); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">AbsoraCloud</h1>
+        <button onclick="location.href='dashboard.html'" class="btn" style="background:#1e1e2e;">Back to Dashboard</button>
+    </nav>
 
-    <div id="main">
-        <div id="header">
+    <div class="panel">
+        <h2 style="margin-top:0; margin-bottom:0.75rem; font-size:1.8rem;">
+            Console: <span id="server-title" style="color:var(--accent)">Loading...</span>
+            <span style="font-size:0.85rem; color:var(--text-muted); margin-left:1rem;">
+                <span class="status-dot offline" id="conn-dot"></span><span id="conn-txt">Connecting...</span>
+            </span>
+        </h2>
+        
+        <div id="ip-bar" style="display:none; background:#0a0a12; border:1px solid #1e1e2e; border-radius:10px; padding:0.75rem 1.25rem; margin-bottom:1.5rem; gap:2rem; flex-wrap:wrap; align-items:center;">
             <div>
-                <h2 style="margin: 0; font-size: 1.2rem;" id="server-title">Loading Server...</h2>
-                <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem;">
-                    Node: <span id="node-name">Allocating</span> | <span id="status" class="status-badge status-queued">Connecting...</span>
+                <div style="font-size:0.7rem; color:#94a3b8; font-weight:800; margin-bottom:2px;">CONNECT ADDRESS</div>
+                <div id="ip-domain" style="font-family:'JetBrains Mono',monospace; color:#06b6d4; font-size:1.2rem; font-weight:700;">Waiting for server...</div>
+                <div id="ip-bore" style="font-size:0.8rem; color:var(--text-muted);"></div>
+            </div>
+            <button onclick="copyIP()" style="margin-left:auto; background:#1e1e2e; border:1px solid #334155; color:white; padding:0.6rem 1.2rem; border-radius:6px; cursor:pointer; font-weight:700;"><i class="fa-solid fa-copy"></i> Copy IP</button>
+        </div>
+
+        <div class="tab-bar">
+            <button class="tab-btn active" onclick="tab('console', this)">📊 Console</button>
+            <button class="tab-btn" onclick="tab('players', this)">👥 Players</button>
+            <button class="tab-btn" onclick="tab('props', this)">⚙️ Properties</button>
+            <button class="tab-btn" onclick="tab('plugins', this)">🔌 Plugins</button>
+            <button class="tab-btn" onclick="tab('mods', this)">🧩 Mods</button>
+            <button class="tab-btn" onclick="tab('files', this)">📁 Files</button>
+            <button class="tab-btn" onclick="tab('backups', this); loadBackups();">☁️ Backups</button>
+        </div>
+
+        <div id="v-console" class="view active">
+            <div style="display:flex; gap:0.5rem; margin-bottom:1rem;">
+                <button class="btn btn-s" id="btn-start" onclick="power('start')"><i class="fa-solid fa-play"></i> Start</button>
+                <button class="btn btn-w" id="btn-restart" onclick="power('restart')"><i class="fa-solid fa-rotate-right"></i> Restart</button>
+                <button class="btn btn-d" id="btn-stop" onclick="power('stop')"><i class="fa-solid fa-stop"></i> Stop</button>
+                <button class="btn btn-d" style="background:#991b1b" onclick="power('kill')"><i class="fa-solid fa-skull"></i> Kill</button>
+                <button class="btn btn-p" style="margin-left:auto;" onclick="renewTime()">Renew Time (12h)</button>
+            </div>
+            
+            <div id="terminal-container"></div>
+            
+            <div class="usage-bar">
+                <div class="u-box">
+                    <div class="u-label"><span>CPU USAGE</span><span id="c-txt">0%</span></div>
+                    <div class="progress-bg"><div id="c-bar" class="progress-fill" style="width:0%; background:var(--accent-glow)"></div></div>
+                </div>
+                <div class="u-box">
+                    <div class="u-label"><span>RAM USAGE</span><span id="r-txt">0 MB / ? MB</span></div>
+                    <div class="progress-bg"><div id="r-bar" class="progress-fill" style="width:0%; background:var(--accent)"></div></div>
                 </div>
             </div>
             
-            <div style="display: flex; gap: 1rem; align-items: center;">
-                <div id="ip-display" style="display: none; background: rgba(139, 92, 246, 0.1); border: 1px solid var(--accent); padding: 0.5rem 1rem; border-radius: 6px; font-size: 0.85rem; display: flex; flex-direction: column; align-items: flex-end; line-height: 1.2;">
-                    <span style="color: var(--text-muted); font-size: 0.75rem;">Server Address:</span>
-                    <strong style="color: var(--accent-glow);" id="ip-domain">...</strong>
-                    <span style="color: var(--text-muted); font-size: 0.75rem;" id="ip-bore">...</span>
-                </div>
-                <button class="btn btn-outline" onclick="renewServer()">Renew Time (12h)</button>
-                <div class="power-controls">
-                    <button class="power-btn btn-start" onclick="sendPower('start')" title="Start"><i class="fa-solid fa-play"></i></button>
-                    <button class="power-btn btn-restart" onclick="sendPower('restart')" title="Restart"><i class="fa-solid fa-rotate-right"></i></button>
-                    <button class="power-btn btn-stop" onclick="sendPower('stop')" title="Stop"><i class="fa-solid fa-stop"></i></button>
-                    <button class="power-btn btn-danger" onclick="sendPower('kill')" title="Kill"><i class="fa-solid fa-skull"></i></button>
-                </div>
+            <div style="display:flex; gap:1rem; margin-top:1.5rem;">
+                <input type="text" id="cmd-input" placeholder="Type a command (/say Hello)..." onkeypress="if(event.key==='Enter') sendCmd()">
+                <button class="btn btn-p" onclick="sendCmd()">Execute</button>
             </div>
         </div>
 
-        <div id="console-page" class="page active">
-            <div id="terminal-container"></div>
-            <div style="display: flex; gap: 0.5rem; padding: 1rem; background: var(--bg-panel); border-top: 1px solid var(--border);">
-                <input type="text" id="command-input" placeholder="Type a command (e.g. /help, /say Hello) and press Enter..." style="margin-bottom: 0; background: var(--bg-main); border: 1px solid var(--border);" onkeypress="if(event.key==='Enter') sendCommandFromBox()">
-                <button class="btn btn-primary" onclick="sendCommandFromBox()">Send</button>
+        <div id="v-players" class="view">
+            <div style="display:flex; gap:1rem; margin-bottom:1rem;">
+                <input type="text" id="p-user" placeholder="Player Username">
+                <button class="btn btn-s" onclick="wsCmd('op ' + document.getElementById('p-user').value)">OP</button>
+                <button class="btn btn-d" onclick="wsCmd('deop ' + document.getElementById('p-user').value)">De-OP</button>
+            </div>
+            <div style="display:flex; gap:1rem; margin-bottom:1rem;">
+                <input type="text" id="k-user" placeholder="Player Username">
+                <button class="btn btn-w" onclick="wsCmd('kick ' + document.getElementById('k-user').value)">Kick</button>
+                <button class="btn btn-d" onclick="wsCmd('ban ' + document.getElementById('k-user').value)">Ban</button>
             </div>
         </div>
 
-        <div id="files-page" class="page">
-            <div class="panel">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                    <h3 style="margin: 0;">File Manager: <span id="current-path" style="color:var(--accent);">/</span></h3>
-                    <button class="btn btn-outline" onclick="loadFiles()">Refresh</button>
-                </div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Name</th>
-                            <th>Size</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="file-list">
-                        <tr><td colspan="3">Loading...</td></tr>
-                    </tbody>
-                </table>
+        <div id="v-props" class="view">
+            <div style="display:flex; justify-content:space-between; margin-bottom:1.5rem;">
+                <h3 style="margin:0;">Server.properties Editor</h3>
+                <button class="btn btn-s" onclick="saveProps()">Apply Changes</button>
             </div>
+            <div id="prop-load" style="padding:2rem; text-align:center; color:var(--warning);">Loading properties... (Server must be booted at least once)</div>
+            <div id="prop-grid" style="display:none; grid-template-columns: 1fr 1fr; gap: 1.5rem;"></div>
         </div>
 
-        <div id="version-page" class="page" style="padding: 2rem;">
-            <h2>Update Software</h2>
-            <div class="panel" style="max-width: 600px;">
-                <label style="display:block; margin-bottom:0.5rem; color:var(--text-muted);">Software</label>
-                <select id="v-software" onchange="loadVersions()">
-                    <option value="paper">PaperMC</option>
+        <div id="v-plugins" class="view">
+            <div style="display:flex; gap:1rem; margin-bottom:1.5rem;">
+                <input type="text" id="pl-q" placeholder="Search Modrinth Plugins..." style="flex:1;" onkeypress="if(event.key==='Enter') searchAddons('plugin')">
+                <button class="btn btn-p" onclick="searchAddons('plugin')">Search</button>
+            </div>
+            <div id="pl-res" class="mod-grid"></div>
+        </div>
+
+        <div id="v-mods" class="view">
+            <div style="display:flex; gap:1rem; margin-bottom:1.5rem;">
+                <select id="md-loader" style="width:140px;">
+                    <option value="">Any loader</option>
                     <option value="fabric">Fabric</option>
                     <option value="forge">Forge</option>
-                    <option value="high_performance">High Performance</option>
-                    <option value="hybrid">Hybrid</option>
-                    <option value="proxies">Proxies</option>
-                    <option value="purpur">Purpur</option>
+                    <option value="neoforge">NeoForge</option>
                     <option value="quilt">Quilt</option>
-                    <option value="spigot">Spigot</option>
                 </select>
-
-                <label style="display:block; margin-top:1rem; margin-bottom:0.5rem; color:var(--text-muted);">Version</label>
-                <select id="v-version">
-                    <option value="latest">Loading...</option>
-                </select>
-                
-                <label style="display:block; margin-top:1rem; margin-bottom:0.5rem; color:var(--text-muted);">Java Version</label>
-                <select id="v-java">
-                    <option value="21">Java 21 (Minecraft 1.20.5+)</option>
-                    <option value="17">Java 17 (Minecraft 1.17 - 1.20.4)</option>
-                    <option value="8">Java 8 (Minecraft 1.16.5 and older)</option>
-                </select>
-
-                <button class="btn btn-primary" onclick="updateSoftware()" style="margin-top:1.5rem;">Update Server Settings</button>
-                <p style="font-size:0.85rem; color:var(--danger); margin-top:1rem;">Note: You must restart the server for these changes to take effect.</p>
+                <input type="text" id="md-q" placeholder="Search Modrinth Mods..." style="flex:1;" onkeypress="if(event.key==='Enter') searchAddons('mod')">
+                <button class="btn btn-p" onclick="searchAddons('mod')">Search</button>
             </div>
+            <div id="md-res" class="mod-grid"></div>
         </div>
 
-        <div id="properties-page" class="page" style="padding: 2rem;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
-                <h2>Server Properties</h2>
-                <button class="btn btn-primary" style="width:auto;" onclick="saveProperties()"><i class="fa-solid fa-save"></i> Save</button>
-            </div>
-            <div class="panel" id="properties-form" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                <p>Loading properties...</p>
-            </div>
-        </div>
-
-        <div id="plugins-page" class="page">
-            <div class="panel">
-                <h3>Plugin Browser (Modrinth)</h3>
-                <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
-                    <input type="text" id="plugin-search" placeholder="Search for plugins..." style="margin-bottom:0;" onkeypress="if(event.key==='Enter') searchPlugins()">
-                    <button class="btn btn-primary" onclick="searchPlugins()">Search</button>
+        <div id="v-files" class="view">
+            <div>
+                <p style="color:var(--accent); font-weight:bold;">Path: /<span id="f-path"></span></p>
+                <div style="display:flex; gap:1rem; margin-bottom:1rem; align-items:center;">
+                    <input type="file" id="f-up" style="width:auto; margin:0;" multiple>
+                    <button class="btn btn-s" onclick="uploadFiles()">Upload</button>
+                    <button class="btn btn-p" onclick="loadFiles(cPath)">Refresh</button>
                 </div>
-                <div id="plugin-results" style="display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));">
+                <div style="background:#000; border-radius:8px; border:1px solid var(--border); max-height:400px; overflow-y:auto;">
+                    <table>
+                        <thead><tr><th>Name</th><th>Size</th><th style="width:100px;">Actions</th></tr></thead>
+                        <tbody id="f-list"><tr><td colspan="3" style="text-align:center;">Loading...</td></tr></tbody>
+                    </table>
                 </div>
             </div>
         </div>
 
-        <div id="backups-page" class="page">
-            <div class="panel" style="max-width: 600px;">
-                <h3>Backup Management</h3>
-                <p style="color: var(--text-muted); margin-bottom: 1rem;">Backups are saved as tar.gz archives directly on the runner node.</p>
-                <button class="btn btn-primary" onclick="createBackup()">Create Backup Now</button>
-                <div id="backup-status" style="margin-top: 1rem; font-weight: bold;"></div>
+        <div id="v-backups" class="view">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2rem;">
+                <h3 style="margin:0;">Runner Backups</h3>
+                <button class="btn btn-s" onclick="wsCmdJson({type:'backup_create'})">Generate Backup Now</button>
             </div>
+            <div id="backup-list" style="display:flex; flex-direction:column; gap:1rem;"></div>
         </div>
     </div>
 
-    <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
     
     <script>
-        const urlParams = new URLSearchParams(window.location.search);
-        const instanceId = urlParams.get('id');
+        const instId = new URLSearchParams(window.location.search).get('id');
         let term, ws;
+        let cPath = "";
         let currentSessionId = null;
-        let currentPath = '/';
+        let wsToken = null;
+        let propMap = {};
 
-        function switchPage(pageId) {
-            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-            
-            document.getElementById(`${pageId}-page`).classList.add('active');
-            event.currentTarget.classList.add('active');
-
-            if (pageId === 'console' && term) fitAddon.fit();
-            if (pageId === 'files') loadFiles();
-            if (pageId === 'properties') loadProperties();
+        function tab(id, btn) {
+            document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById('v-' + id).classList.add('active');
+            btn.classList.add('active');
+            if (id === 'console' && term) fitAddon.fit();
+            if (id === 'files' && ws && ws.readyState === WebSocket.OPEN) loadFiles(cPath);
+            if (id === 'props' && ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'file_read', path: 'server.properties' }));
         }
 
         term = new Terminal({ theme: { background: '#000000' }, convertEol: true });
@@ -285,58 +293,57 @@
         term.open(document.getElementById('terminal-container'));
         fitAddon.fit();
         window.addEventListener('resize', () => {
-            if(document.getElementById('console-page').classList.contains('active')) fitAddon.fit();
+            if(document.getElementById('v-console').classList.contains('active')) fitAddon.fit();
         });
 
-        term.writeln('\x1b[1;36m[AbsoraCloud]\x1b[0m Requesting orbital compute resources...');
-
-        fetch(`/api/instances`, { headers: { 'Authorization': 'Bearer ' + document.cookie } })
-            .then(r => r.json())
-            .then(data => {
-                if (data.instances) {
-                    const inst = data.instances.find(i => i.instance_id == instanceId);
-                    if (inst) {
-                        document.getElementById('server-title').innerText = inst.servername;
-                    }
+        let inputBuffer = '';
+        term.onData(e => {
+            if (e === '\r') {
+                term.write('\r\n');
+                wsCmd(inputBuffer);
+                inputBuffer = '';
+            } else if (e === '\u007F') {
+                if (inputBuffer.length > 0) {
+                    inputBuffer = inputBuffer.substr(0, inputBuffer.length - 1);
+                    term.write('\b \b');
                 }
-            });
+            } else {
+                inputBuffer += e;
+                term.write(e);
+            }
+        });
 
-        async function updateSoftware() {
-            const software = document.getElementById('v-software').value;
-            const version = document.getElementById('v-version').value;
-            const java_version = document.getElementById('v-java').value;
-            
-            try {
-                const res = await fetch('/api/instances', {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ instance_id: parseInt(instanceId), software, version, java_version })
-                });
-                const data = await res.json();
-                alert(data.message || data.error);
-            } catch(e) {
-                alert("Failed to update settings.");
+        // ── API Lifecycle ──
+        async function fetchServerInfo() {
+            const res = await fetch(`/api/instances`);
+            const data = await res.json();
+            if(data.instances) {
+                const inst = data.instances.find(i => i.instance_id == instId);
+                if(inst) document.getElementById('server-title').innerText = inst.servername;
             }
         }
 
-        async function bootServer(force = false) {
+        async function bootServer() {
+            term.writeln('\x1b[1;36m[AbsoraCloud]\x1b[0m Requesting resources...');
+            setConnStatus('busy', 'Allocating...');
             try {
                 const res = await fetch('/api/dispatch', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ instance_id: instanceId, force_trigger: force })
+                    body: JSON.stringify({ instance_id: instId })
                 });
                 const data = await res.json();
 
                 if (data.status === 'success' || data.status === 'assigned' || data.status === 'queued') {
                     currentSessionId = data.session_id;
-                    term.writeln('\x1b[1;33m[System]\x1b[0m Allocating resources. Please wait...');
                     pollStatus(data.session_id);
                 } else {
                     term.writeln(`\x1b[1;31m[Error]\x1b[0m ${data.message}`);
+                    setConnStatus('offline', 'Error');
                 }
             } catch (e) {
-                term.writeln('\x1b[1;31m[System Error]\x1b[0m Failed to contact API.');
+                term.writeln('\x1b[1;31m[Error]\x1b[0m Failed to contact API.');
+                setConnStatus('offline', 'API Error');
             }
         }
 
@@ -346,358 +353,248 @@
                 const data = await res.json();
                 if (data.status === 'running') {
                     clearInterval(interval);
-                    term.writeln('\x1b[1;32m[System]\x1b[0m Runner active. Connecting tunnel...');
+                    term.writeln('\x1b[1;32m[System]\x1b[0m Runner active. Establishing WebSocket tunnel...');
                     connectWebSocket(data.worker_url, sessionId);
-                } else if (data.status === 'assigned') {
-                    // Runner assigned but hasn't picked up the task yet (polling takes up to 10s)
                 }
             }, 3000);
         }
 
-        function connectWebSocket(workerUrl, sessionId, retryCount = 0) {
-            ws = new WebSocket(workerUrl);
-            const statusEl = document.getElementById('status');
-            const parts = workerUrl.split('//');
-            if(parts.length > 1) {
-                document.getElementById('node-name').innerText = parts[1].split('.')[0];
-            }
-
-            ws.onopen = () => {
-                statusEl.className = 'status-badge status-connected';
-                statusEl.innerText = 'Connected';
-                ws.send(JSON.stringify({ session_id: sessionId }));
-                loadFiles(); 
-                setupPropertiesHook();
-            };
-
-            ws.onmessage = (event) => {
-                const msg = JSON.parse(event.data);
-                if (msg.type === 'message') {
-                    term.write(msg.data);
-                } else if (msg.type === 'error') {
-                    term.writeln(`\x1b[1;31m[Runner Error]\x1b[0m ${msg.message}`);
-                } else if (msg.type === 'file_list_result') {
-                    renderFiles(msg.path, msg.items);
-                } else if (msg.type === 'backup_success') {
-                    const el = document.getElementById('backup-status');
-                    el.innerText = 'Backup created successfully!';
-                    el.style.color = 'var(--success)';
-                } else if (msg.type === 'backup_error') {
-                    const el = document.getElementById('backup-status');
-                    el.innerText = 'Backup failed: ' + msg.message;
-                    el.style.color = 'var(--danger)';
-                } else if (msg.type === 'file_delete_success') {
-                    loadFiles(currentPath);
-                } else if (msg.type === 'server_ip') {
-                    const display = document.getElementById('ip-display');
-                    display.style.display = 'flex';
-                    document.getElementById('ip-domain').innerText = msg.domain;
-                    document.getElementById('ip-bore').innerText = `Node IP: bore.pub:${msg.bore_port}`;
-                } else if (msg.type === 'file_error') {
-                    alert('File operation error: ' + msg.message);
-                }
-            };
-
-            ws.onclose = () => {
-                document.getElementById('ip-display').style.display = 'none';
-                if (retryCount < 10) {
-                    setTimeout(() => connectWebSocket(workerUrl, sessionId, retryCount + 1), 3000);
-                } else {
-                    statusEl.className = 'status-badge status-offline';
-                    statusEl.innerText = 'Offline';
-                    term.writeln('\n\x1b[1;31m[System]\x1b[0m Connection lost permanently.');
-                }
-            };
-
-            let inputBuffer = '';
-            term.onData(e => {
-                if (e === '\r') {
-                    term.write('\r\n');
-                    if (ws && ws.readyState === WebSocket.OPEN) {
-                        ws.send(JSON.stringify({ type: 'command', command: inputBuffer }));
-                    }
-                    inputBuffer = '';
-                } else if (e === '\u007F') {
-                    if (inputBuffer.length > 0) {
-                        inputBuffer = inputBuffer.substr(0, inputBuffer.length - 1);
-                        term.write('\b \b');
-                    }
-                } else {
-                    inputBuffer += e;
-                    term.write(e);
-                }
-            });
-        }
-
-        function sendCommandFromBox() {
-            const inputEl = document.getElementById('command-input');
-            const cmd = inputEl.value;
-            if (cmd && ws && ws.readyState === WebSocket.OPEN) {
-                term.writeln(`\x1b[38;5;245m> ${cmd}\x1b[0m`);
-                ws.send(JSON.stringify({ type: 'command', command: cmd }));
-                inputEl.value = '';
-            }
-        }
-
-        function sendPower(action) {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'power', action: action }));
-            } else if (action === 'start') {
-                term.writeln('\x1b[1;36m[AbsoraCloud]\x1b[0m Forcing manual server start...');
-                bootServer(true);
-            }
-        }
-
-        function loadFiles(path = currentPath) {
-            currentPath = path;
-            document.getElementById('current-path').innerText = path;
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'file_list', path: path }));
-            }
-        }
-
-        function renderFiles(path, items) {
-            const tbody = document.getElementById('file-list');
-            tbody.innerHTML = '';
-            
-            if (path !== '/' && path !== '') {
-                const parts = path.split('/');
-                parts.pop();
-                const parent = parts.join('/') || '/';
-                tbody.innerHTML += `<tr>
-                    <td><a href="#" onclick="loadFiles('${parent}')" style="color:var(--text-main);text-decoration:none;"><i class="fa-solid fa-folder-open dir-icon"></i> ..</a></td>
-                    <td>-</td>
-                    <td></td>
-                </tr>`;
-            }
-
-            items.sort((a,b) => b.is_dir - a.is_dir).forEach(item => {
-                const icon = item.is_dir ? '<i class="fa-solid fa-folder dir-icon"></i>' : '<i class="fa-solid fa-file file-icon"></i>';
-                const size = item.is_dir ? '-' : (item.size / 1024).toFixed(1) + ' KB';
-                const nextPath = (path === '/' || path === '') ? `/${item.name}` : `${path}/${item.name}`;
-                
-                let nameHtml = `<span style="color:var(--text-main);">${item.name}</span>`;
-                if (item.is_dir) {
-                    nameHtml = `<a href="#" onclick="loadFiles('${nextPath}')" style="color:var(--text-main);text-decoration:none;">${item.name}</a>`;
-                }
-                
-                tbody.innerHTML += `<tr>
-                    <td>${icon} ${nameHtml}</td>
-                    <td>${size}</td>
-                    <td><button class="btn btn-danger" style="padding:0.25rem 0.5rem;" onclick="deleteFile('${nextPath}')"><i class="fa-solid fa-trash"></i></button></td>
-                </tr>`;
-            });
-        }
-
-        function deleteFile(path) {
-            if(confirm(`Delete ${path}?`)) {
-                ws.send(JSON.stringify({ type: 'file_delete', path: path }));
-            }
-        }
-
-        function createBackup() {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'backup_create' }));
-                const el = document.getElementById('backup-status');
-                el.innerText = 'Archiving server files...';
-                el.style.color = 'var(--text-muted)';
-            }
-        }
-
-        async function searchPlugins() {
-            const q = document.getElementById('plugin-search').value;
-            const res = await fetch(`/api/plugins?q=${encodeURIComponent(q)}&software=${document.getElementById('s-edit').value}`);
-            const data = await res.json();
-            const container = document.getElementById('plugin-results');
-            container.innerHTML = '';
-            
-            if (data.plugins) {
-                data.plugins.forEach(p => {
-                    container.innerHTML += `
-                        <div class="panel" style="padding:1rem;margin-bottom:0;">
-                            <h4 style="margin:0 0 0.5rem 0;">${p.title}</h4>
-                            <p style="font-size:0.85rem;color:var(--text-muted);margin:0 0 1rem 0;">${p.description.substring(0, 80)}...</p>
-                            <a href="https://modrinth.com/plugin/${p.slug}" target="_blank" class="btn btn-outline" style="text-decoration:none;display:inline-block;width:100%;text-align:center;">View on Modrinth</a>
-                        </div>
-                    `;
-                });
-            }
-        }
-
-        async function loadEditVersions() {
-            const software = document.getElementById('s-edit').value;
-            const sel = document.getElementById('v-edit');
-            sel.innerHTML = '<option value="latest">Loading...</option>';
-            
+        async function connectWebSocket(workerUrl, sessionId) {
+            // Get JWT for WS Auth
             try {
-                const res = await fetch(`/api/software?type=${software}`);
-                const data = await res.json();
-                
-                if (data.versions && data.versions.length > 0) {
-                    sel.innerHTML = '<option value="latest">Latest Recommended</option>';
-                    data.versions.forEach(v => {
-                        sel.innerHTML += `<option value="${v}">${v}</option>`;
-                    });
-                } else {
-                    sel.innerHTML = '<option value="latest">No versions found</option>';
-                }
-            } catch (e) {
-                sel.innerHTML = '<option value="latest">Error loading versions</option>';
-            }
-        }
-
-        async function updateSoftware(e) {
-            const btn = e.target;
-            btn.innerText = "Updating...";
-            const res = await fetch('/api/instances', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    instance_id: instanceId,
-                    software: document.getElementById('s-edit').value,
-                    version: document.getElementById('v-edit').value
-                })
-            });
-            const data = await res.json();
-            if(data.status === 'success') {
-                btn.innerText = "Success! Please Restart.";
-                btn.className = "btn btn-success";
-                term.writeln(`\n\x1b[1;32m[System]\x1b[0m Software update flagged. Please restart your server.`);
-                sendPower('restart'); // Automatically trigger restart
-            } else {
-                btn.innerText = "Error";
-                alert(data.message);
-            }
-        }
-
-        async function renewServer() {
-            if (!currentSessionId) return alert('Session not initialized yet.');
-            try {
-                const res = await fetch('/api/renew', {
+                const authRes = await fetch('/api/ws_auth', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ session_id: currentSessionId })
+                    body: JSON.stringify({ session_id: sessionId })
                 });
-                const data = await res.json();
-                if (data.status === 'success') {
-                    const d = new Date(data.expires_at * 1000);
-                    term.writeln(`\n\x1b[1;32m[System]\x1b[0m Server successfully renewed! Expires at: ${d.toLocaleTimeString()}`);
-                } else {
-                    term.writeln(`\n\x1b[1;31m[System]\x1b[0m Renewal failed: ${data.message}`);
-                }
-            } catch (e) {
-                term.writeln('\n\x1b[1;31m[System]\x1b[0m Failed to contact renewal API.');
-            }
-        }
-
-        if (instanceId) bootServer();
-        else term.writeln('\x1b[1;31m[Error]\x1b[0m No Instance ID provided.');
-        // ==========================================
-        // Properties Editing
-        // ==========================================
-        let propertiesMap = {};
-
-        function loadProperties() {
-            if (!ws || ws.readyState !== WebSocket.OPEN) {
-                document.getElementById('properties-form').innerHTML = '<p>Server is offline. Start the server to edit properties.</p>';
-                return;
-            }
-            ws.send(JSON.stringify({ type: 'read_file', path: 'server.properties' }));
-        }
-
-        function parseProperties(content) {
-            propertiesMap = {};
-            const lines = content.split('\n');
-            const form = document.getElementById('properties-form');
-            form.innerHTML = '';
-            
-            lines.forEach(line => {
-                line = line.trim();
-                if (!line || line.startsWith('#')) return;
+                const authData = await authRes.json();
+                if(!authData.ws_token) throw new Error("Failed to get WS Token");
+                wsToken = authData.ws_token;
                 
-                const parts = line.split('=');
-                if (parts.length >= 2) {
-                    const key = parts[0];
-                    const val = parts.slice(1).join('=');
-                    propertiesMap[key] = val;
-                    
-                    const wrap = document.createElement('div');
-                    wrap.style.display = 'flex';
-                    wrap.style.flexDirection = 'column';
-                    
-                    const label = document.createElement('label');
-                    label.innerText = key;
-                    label.style.fontSize = '0.8rem';
-                    label.style.color = 'var(--text-muted)';
-                    label.style.marginBottom = '0.25rem';
-                    
-                    let input;
-                    if (val === 'true' || val === 'false') {
-                        input = document.createElement('select');
-                        input.innerHTML = `<option value="true" ${val==='true'?'selected':''}>true</option><option value="false" ${val==='false'?'selected':''}>false</option>`;
-                    } else {
-                        input = document.createElement('input');
-                        input.type = 'text';
-                        input.value = val;
-                    }
-                    input.id = `prop-${key}`;
-                    
-                    wrap.appendChild(label);
-                    wrap.appendChild(input);
-                    form.appendChild(wrap);
-                }
+                ws = new WebSocket(workerUrl);
+                ws.onopen = () => {
+                    setConnStatus('online', 'Connected');
+                    ws.send(JSON.stringify({ token: wsToken }));
+                    ws.send(JSON.stringify({ type: 'file_read', path: 'server.properties' }));
+                };
+                
+                ws.onmessage = handleWsMessage;
+                
+                ws.onclose = () => {
+                    setConnStatus('offline', 'Disconnected');
+                    document.getElementById('ip-bar').style.display = 'none';
+                    term.writeln('\n\x1b[1;31m[System]\x1b[0m Connection to runner lost. Reconnecting...');
+                    setTimeout(() => connectWebSocket(workerUrl, sessionId), 5000);
+                };
+            } catch (e) {
+                term.writeln(`\x1b[1;31m[Auth Error]\x1b[0m ${e.message}`);
+            }
+        }
+
+        function handleWsMessage(e) {
+            const msg = JSON.parse(e.data);
+            if (msg.type === 'message') {
+                term.write(msg.data);
+            } else if (msg.type === 'server_ip') {
+                document.getElementById('ip-bar').style.display = 'flex';
+                document.getElementById('ip-domain').innerText = msg.domain;
+                document.getElementById('ip-bore').innerText = `Internal Tunnel: bore.pub:${msg.bore_port}`;
+            } else if (msg.type === 'file_list_result') {
+                renderFiles(msg.path, msg.items);
+            } else if (msg.type === 'file_read_result' && msg.path === 'server.properties') {
+                renderProps(msg.content);
+            } else if (msg.type === 'file_write_success') {
+                alert("File saved successfully.");
+            } else if (msg.type === 'backup_list_result') {
+                renderBackups(msg.backups);
+            } else if (msg.type === 'backup_success' || msg.type === 'backup_delete_success' || msg.type === 'backup_restore_success') {
+                alert("Backup operation completed!");
+                if(document.getElementById('v-backups').classList.contains('active')) loadBackups();
+            } else if (msg.type === 'error' || msg.type === 'file_error' || msg.type === 'backup_error') {
+                alert("Daemon Error: " + msg.message);
+                term.writeln(`\n\x1b[1;31m[Error]\x1b[0m ${msg.message}`);
+            } else if (msg.type === 'download_success') {
+                alert("Modrinth download completed successfully.");
+            } else if (msg.type === 'unzip_success') {
+                alert("Extracted successfully.");
+                loadFiles(cPath);
+            }
+        }
+
+        // ── Console Helpers ──
+        function setConnStatus(state, text) {
+            const dot = document.getElementById('conn-dot');
+            dot.className = `status-dot ${state}`;
+            document.getElementById('conn-txt').innerText = text;
+        }
+
+        function power(action) {
+            if (action === 'start') return bootServer();
+            wsCmdJson({ type: 'power', action });
+        }
+        function renewTime() {
+            if(!currentSessionId) return;
+            fetch('/api/renew', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: currentSessionId }) })
+            .then(r=>r.json()).then(data => {
+                if(data.status === 'success') alert("Session renewed for 12 hours.");
             });
-            if (Object.keys(propertiesMap).length === 0) {
-                form.innerHTML = '<p>No properties found. Has the server booted up at least once?</p>';
+        }
+        function wsCmd(cmd) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                term.writeln(`\x1b[38;5;245m> ${cmd}\x1b[0m`);
+                ws.send(JSON.stringify({ type: 'command', command: cmd }));
+            }
+        }
+        function wsCmdJson(json) {
+            if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(json));
+        }
+        function sendCmd() {
+            const input = document.getElementById('cmd-input');
+            if(input.value) { wsCmd(input.value); input.value = ''; }
+        }
+        function copyIP() {
+            const text = document.getElementById('ip-domain').innerText;
+            navigator.clipboard.writeText(text);
+            alert("IP Copied: " + text);
+        }
+
+        // ── Files ──
+        function loadFiles(path = "") {
+            cPath = path;
+            document.getElementById('f-path').innerText = path;
+            wsCmdJson({ type: 'file_list', path });
+        }
+        function renderFiles(path, items) {
+            const tbody = document.getElementById('f-list');
+            tbody.innerHTML = '';
+            if (path !== '') {
+                const parent = path.split('/').slice(0, -1).join('/');
+                tbody.innerHTML += `<tr><td><a href="#" onclick="loadFiles('${parent}')" style="color:var(--text-main);text-decoration:none;"><i class="fa-solid fa-folder-open dir-icon"></i> ..</a></td><td>-</td><td></td></tr>`;
+            }
+            items.sort((a,b) => b.is_dir - a.is_dir).forEach(i => {
+                const nPath = path ? `${path}/${i.name}` : i.name;
+                const icon = i.is_dir ? '<i class="fa-solid fa-folder dir-icon"></i>' : '<i class="fa-solid fa-file file-icon"></i>';
+                const name = i.is_dir ? `<a href="#" onclick="loadFiles('${nPath}')" style="color:var(--text-main);text-decoration:none;">${i.name}</a>` : i.name;
+                
+                let actions = `<button class="btn btn-d" style="padding:0.4rem;" onclick="if(confirm('Delete?')) wsCmdJson({type:'file_delete', path:'${nPath}'})"><i class="fa-solid fa-trash"></i></button>`;
+                if(i.name.endsWith('.zip')) {
+                    actions += ` <button class="btn btn-p" style="padding:0.4rem;" onclick="wsCmdJson({type:'file_unzip', path:'${nPath}'})"><i class="fa-solid fa-box-open"></i></button>`;
+                }
+
+                tbody.innerHTML += `<tr><td>${icon} ${name}</td><td>${i.is_dir ? '-' : (i.size/1024).toFixed(1)+' KB'}</td><td>${actions}</td></tr>`;
+            });
+        }
+        async function uploadFiles() {
+            const files = document.getElementById('f-up').files;
+            if(!files.length || !ws) return;
+            for(let f of files) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const b64 = e.target.result.split(',')[1];
+                    const nPath = cPath ? `${cPath}/${f.name}` : f.name;
+                    wsCmdJson({ type: 'file_upload', path: nPath, content: b64 });
+                };
+                reader.readAsDataURL(f);
+            }
+            document.getElementById('f-up').value = '';
+        }
+
+        // ── Properties ──
+        function renderProps(content) {
+            propMap = {};
+            document.getElementById('prop-load').style.display = 'none';
+            const grid = document.getElementById('prop-grid');
+            grid.style.display = 'grid';
+            grid.innerHTML = '';
+            
+            content.split('\n').forEach(line => {
+                if(!line || line.startsWith('#')) return;
+                const [k, ...v] = line.split('=');
+                const val = v.join('=');
+                propMap[k] = val;
+                
+                const w = document.createElement('div');
+                let inp = `<input type="text" id="pr-${k}" value="${val}">`;
+                if(val === 'true' || val === 'false') {
+                    inp = `<select id="pr-${k}"><option value="true" ${val==='true'?'selected':''}>true</option><option value="false" ${val==='false'?'selected':''}>false</option></select>`;
+                }
+                w.innerHTML = `<label class="u-label">${k}</label>${inp}`;
+                grid.appendChild(w);
+            });
+        }
+        function saveProps() {
+            let out = "#Minecraft server properties\n";
+            for(let k in propMap) {
+                const el = document.getElementById(`pr-${k}`);
+                out += `${k}=${el ? el.value : propMap[k]}\n`;
+            }
+            wsCmdJson({ type: 'file_write', path: 'server.properties', content: out });
+        }
+
+        // ── Modrinth (Mods/Plugins) ──
+        async function searchAddons(type) {
+            const q = document.getElementById(type === 'plugin' ? 'pl-q' : 'md-q').value;
+            const res = await fetch(`https://api.modrinth.com/v2/search?query=${encodeURIComponent(q)}&facets=[["project_type:${type}"]]`);
+            const data = await res.json();
+            
+            const cont = document.getElementById(type === 'plugin' ? 'pl-res' : 'md-res');
+            cont.innerHTML = '';
+            
+            data.hits.forEach(h => {
+                cont.innerHTML += `
+                    <div class="mod-card">
+                        <div>
+                            <div style="display:flex; align-items:center; margin-bottom:1rem;">
+                                ${h.icon_url ? `<img src="${h.icon_url}" style="width:48px;height:48px;border-radius:8px;margin-right:1rem;">` : ''}
+                                <h4 style="margin:0;">${h.title}</h4>
+                            </div>
+                            <p style="font-size:0.85rem;color:var(--text-muted);">${h.description}</p>
+                        </div>
+                        <button class="btn btn-p" style="margin-top:1rem;width:100%;" onclick="installModrinth('${h.project_id}', '${type}')">Install Latest</button>
+                    </div>
+                `;
+            });
+        }
+        async function installModrinth(projectId, type) {
+            if(!ws) return alert("Console offline.");
+            try {
+                const res = await fetch(`https://api.modrinth.com/v2/project/${projectId}/version`);
+                const versions = await res.json();
+                if(versions.length > 0 && versions[0].files.length > 0) {
+                    const f = versions[0].files[0];
+                    const folder = type === 'plugin' ? 'plugins' : 'mods';
+                    wsCmdJson({ type: 'download_url', url: f.url, path: `${folder}/${f.filename}` });
+                    alert(`Downloading ${f.filename} to ${folder}/...`);
+                }
+            } catch(e) {
+                alert("Failed to resolve Modrinth download.");
             }
         }
 
-        function saveProperties() {
-            if (!ws || ws.readyState !== WebSocket.OPEN) return alert("WebSocket not connected.");
-            
-            let newContent = "#Minecraft server properties\n";
-            for (const key in propertiesMap) {
-                const el = document.getElementById(`prop-${key}`);
-                if (el) {
-                    newContent += `${key}=${el.value}\n`;
-                } else {
-                    newContent += `${key}=${propertiesMap[key]}\n`;
-                }
-            }
-            
-            ws.send(JSON.stringify({
-                type: 'write_file',
-                path: 'server.properties',
-                content: newContent
-            }));
-            
-            alert("Properties saved! Restart the server to apply.");
+        // ── Backups ──
+        function loadBackups() { wsCmdJson({ type: 'backup_list' }); }
+        function renderBackups(backups) {
+            const cont = document.getElementById('backup-list');
+            cont.innerHTML = backups.length ? '' : '<p>No backups found.</p>';
+            backups.forEach(b => {
+                cont.innerHTML += `
+                    <div class="mod-card" style="flex-direction:row; align-items:center;">
+                        <div>
+                            <h4 style="margin:0;">${b.name}</h4>
+                            <span style="font-size:0.85rem;color:var(--text-muted);">${(b.size/1024/1024).toFixed(2)} MB - ${new Date(b.date*1000).toLocaleString()}</span>
+                        </div>
+                        <div>
+                            <button class="btn btn-w" onclick="if(confirm('Restore this backup? This overrides current data!')) wsCmdJson({type:'backup_restore', name:'${b.name}'})">Restore</button>
+                            <button class="btn btn-d" onclick="if(confirm('Delete backup?')) wsCmdJson({type:'backup_delete', name:'${b.name}'})">Delete</button>
+                        </div>
+                    </div>
+                `;
+            });
         }
 
-        const originalSwitchPage = switchPage;
-        window.switchPage = function(pageId) {
-            originalSwitchPage(pageId);
-            if (pageId === 'properties') {
-                loadProperties();
-            }
-        };
-
-        // Hook into WebSocket message handler for properties
-        const oldOnMessage = ws ? ws.onmessage : null;
-        function setupPropertiesHook() {
-            if (!ws) return;
-            const existing = ws.onmessage;
-            ws.onmessage = (e) => {
-                const msg = JSON.parse(e.data);
-                if (msg.type === 'file_content' && document.getElementById('properties-page').classList.contains('active')) {
-                    if (msg.content) {
-                        parseProperties(msg.content);
-                    } else {
-                        document.getElementById('properties-form').innerHTML = '<p>Failed to load server.properties. Server might not have generated it yet.</p>';
-                    }
-                }
-                if (existing) existing(e);
-            };
+        if(instId) {
+            fetchServerInfo();
+            bootServer();
         }
     </script>
 </body>

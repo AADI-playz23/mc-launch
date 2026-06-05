@@ -47,14 +47,9 @@ export default async function handler(req, res) {
          if (vmInfo && vmInfo.length > 0) worker_url = vmInfo[0].worker_url;
       }
 
-      if (force_trigger && existing.status === 'queued') {
-          // Re-trigger the runner if it's stuck in queued state
-          await triggerGitHubAction();
-      }
-
       return sendSuccess(res, {
         status: existing.status,
-        message: 'Reconnected to existing session' + (force_trigger ? ' (Triggered Runner)' : ''),
+        message: 'Reconnected to existing session',
         session_id: existing.session_id,
         worker_url: worker_url
       });
