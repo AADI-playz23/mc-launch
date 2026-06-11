@@ -484,7 +484,7 @@ def start_game_server(task):
 
     remote_port = None
     for line in bore_proc.stdout:
-        match = re.search(r'listening at localhost:(\d+)', line)
+        match = re.search(r'listening at [a-zA-Z0-9.-]+:(\d+)', line)
         if match:
             remote_port = match.group(1)
             print(f"[{session_id}] Bore tunnel active: localhost:{remote_port}")
@@ -522,7 +522,7 @@ def start_game_server(task):
                     "priority": 0,
                     "weight": 5,
                     "port": int(remote_port),
-                    "target": runner_ip
+                    "target": "bore.pub"
                 },
                 "ttl": 60
             }
