@@ -52,6 +52,15 @@ export default async function handler(req, res) {
         return sendError(res, 403, `Your ${plan.label} plan allows ${plan.slots} instance(s). Upgrade to create more.`);
       }
 
+      // Enforce globally unique servername
+      const nameCheck = await queryD1(
+        'SELECT COUNT(*) as count FROM instances WHERE servername = ?',
+        [servername]
+      );
+      if (nameCheck?.[0]?.count > 0) {
+        return sendError(res, 400, `The server name "${servername}" is already taken. Please choose another.`);
+      }
+
       await executeD1(
         'INSERT INTO instances (username, servername, game, software, version, java_version, ram) VALUES (?, ?, ?, ?, ?, ?, ?)',
         [user.username, servername, game, software, version, java_version, plan.ram]

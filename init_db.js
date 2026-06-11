@@ -46,6 +46,11 @@ async function initSchema() {
         console.log("✓ instances table");
         
         try {
+            await executeD1(`CREATE UNIQUE INDEX IF NOT EXISTS idx_instances_servername ON instances(servername)`);
+            console.log("✓ added unique index for servername");
+        } catch(e) {}
+
+        try {
             await executeD1(`ALTER TABLE instances ADD COLUMN java_version TEXT DEFAULT '21'`);
             console.log("✓ added java_version to existing instances table");
         } catch(e) {}
