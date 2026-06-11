@@ -1,6 +1,6 @@
-import { queryD1, executeD1 } from './_lib/db.js';
-import { requireAuth, sendSuccess, sendError, validateBody } from './_lib/middleware.js';
-import { getPlan } from './_lib/plans.js';
+import { queryD1, executeD1 } from '../_lib/db.js';
+import { requireAuth, sendSuccess, sendError, validateBody } from '../_lib/middleware.js';
+import { getPlan } from '../_lib/plans.js';
 
 export default async function handler(req, res) {
   const user = requireAuth(req, res);

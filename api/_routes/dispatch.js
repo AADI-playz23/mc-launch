@@ -1,6 +1,6 @@
-import { queryD1, executeD1 } from './_lib/db.js';
-import { requireAuth, sendSuccess, sendError } from './_lib/middleware.js';
-import { getRamGb, getCpu, getSessionDurationSecs } from './_lib/plans.js';
+import { queryD1, executeD1 } from '../_lib/db.js';
+import { requireAuth, sendSuccess, sendError } from '../_lib/middleware.js';
+import { getRamGb, getCpu, getSessionDurationSecs } from '../_lib/plans.js';
 
 
 const MAX_VM_RAM_GB = 16;

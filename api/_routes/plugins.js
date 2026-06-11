@@ -1,4 +1,4 @@
-import { sendSuccess, sendError, validateBody } from './_lib/middleware.js';
+import { sendSuccess, sendError, validateBody } from '../_lib/middleware.js';
 import fetch from 'node-fetch'; // Vercel has fetch globally in modern Node, but import is fine
 
 export default async function handler(req, res) {

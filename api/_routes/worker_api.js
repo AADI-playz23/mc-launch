@@ -1,5 +1,5 @@
-import { queryD1, executeD1 } from './_lib/db.js';
-import { requireWorkerAuth, sendSuccess, sendError, validateBody } from './_lib/middleware.js';
+import { queryD1, executeD1 } from '../_lib/db.js';
+import { requireWorkerAuth, sendSuccess, sendError, validateBody } from '../_lib/middleware.js';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret';

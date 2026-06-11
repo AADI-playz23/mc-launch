@@ -1,6 +1,6 @@
-import { queryD1, executeD1 } from './_lib/db.js';
-import { requireWorkerAuth, sendSuccess, sendError, validateBody } from './_lib/middleware.js';
-import { getCpu, getRamGb } from './_lib/plans.js';
+import { queryD1, executeD1 } from '../_lib/db.js';
+import { requireWorkerAuth, sendSuccess, sendError, validateBody } from '../_lib/middleware.js';
+import { getCpu, getRamGb } from '../_lib/plans.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return sendError(res, 405, 'Method not allowed');

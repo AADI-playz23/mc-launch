@@ -1,5 +1,5 @@
-import { queryD1, executeD1 } from './_lib/db.js';
-import { requireAuth, sendSuccess, sendError } from './_lib/middleware.js';
+import { queryD1, executeD1 } from '../_lib/db.js';
+import { requireAuth, sendSuccess, sendError } from '../_lib/middleware.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {

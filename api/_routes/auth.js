@@ -1,8 +1,8 @@
-import { queryD1, executeD1 } from './_lib/db.js';
+import { queryD1, executeD1 } from '../_lib/db.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { serialize } from 'cookie';
-import { JWT_SECRET, sendSuccess, sendError, validateBody } from './_lib/middleware.js';
+import { JWT_SECRET, sendSuccess, sendError, validateBody } from '../_lib/middleware.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {

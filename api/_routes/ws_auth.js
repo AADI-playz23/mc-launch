@@ -1,4 +1,4 @@
-import { requireAuth, sendSuccess, sendError } from './_lib/middleware.js';
+import { requireAuth, sendSuccess, sendError } from '../_lib/middleware.js';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret';

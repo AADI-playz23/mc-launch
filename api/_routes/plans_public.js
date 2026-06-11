@@ -1,5 +1,5 @@
-import { getPublicPlans } from './_lib/plans.js';
-import { sendSuccess, sendError } from './_lib/middleware.js';
+import { getPublicPlans } from '../_lib/plans.js';
+import { sendSuccess, sendError } from '../_lib/middleware.js';
 
 export default function handler(req, res) {
   if (req.method !== 'GET') {
