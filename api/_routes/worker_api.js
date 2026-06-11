@@ -10,7 +10,7 @@ export default async function handler(req, res) {
 
   const valid = validateBody(req, res, {
     op: { required: true, type: 'string' },
-    vm_id: { required: true, type: 'string' }
+    vm_id: { required: false, type: 'string' }
   });
   if (!valid) return;
 
