@@ -379,6 +379,9 @@ def stop_session(session_id, reason="manual"):
     del active_sessions[session_id]
     print(f"[{session_id}] Session stopped. Reason: {reason}")
     
+    # Notify Vercel API that session stopped
+    api_call(API_URL, {"op": "session_stopped", "session_id": session_id})
+    
     # Save persistence
     upload_server_data(sess.get("username"), sess.get("instance_id"), f"/home/runner/servers/server_{sess.get('instance_id')}")
 
