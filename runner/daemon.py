@@ -460,15 +460,19 @@ def start_game_server(task):
                 download_url = data[target_version]
             
             if download_url:
-                print(f"[{session_id}] Downloading {software} {target_version} from {download_url}...")
-                jar_resp = requests.get(download_url, stream=True, timeout=30)
-                if jar_resp.ok:
-                    with open(f"{server_dir}/server.jar", "wb") as f:
-                        for chunk in jar_resp.iter_content(chunk_size=8192):
-                            f.write(chunk)
-                    print(f"[{session_id}] Download complete.")
+                jar_path = f"{server_dir}/server.jar"
+                if not os.path.exists(jar_path):
+                    print(f"[{session_id}] Downloading {software} {target_version} from {download_url}...")
+                    jar_resp = requests.get(download_url, stream=True, timeout=30)
+                    if jar_resp.ok:
+                        with open(jar_path, "wb") as f:
+                            for chunk in jar_resp.iter_content(chunk_size=8192):
+                                f.write(chunk)
+                        print(f"[{session_id}] Download complete.")
+                    else:
+                        print(f"[{session_id}] Failed to download JAR: HTTP {jar_resp.status_code}")
                 else:
-                    print(f"[{session_id}] Failed to download JAR: HTTP {jar_resp.status_code}")
+                    print(f"[{session_id}] server.jar already exists locally, skipping download.")
             else:
                 print(f"[{session_id}] Version {target_version} not found in {software}.json")
         else:
