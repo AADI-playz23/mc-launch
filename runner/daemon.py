@@ -172,8 +172,18 @@ def upload_server_data(username, instance_id, server_dir):
         # We need to take ownership before we can tar them!
         subprocess.run(["sudo", "chown", "-R", f"{os.getuid()}:{os.getgid()}", server_dir])
         
-        # Compress server directory
-        subprocess.run(["tar", "-czf", tar_path, "-C", server_dir, "."])
+        # Compress server directory (exclude giant static files to fit in 10MB limit)
+        subprocess.run([
+            "tar", 
+            "--exclude=./server.jar",
+            "--exclude=./libraries",
+            "--exclude=./versions",
+            "--exclude=./cache",
+            "--exclude=./logs",
+            "-czf", tar_path, 
+            "-C", server_dir, 
+            "."
+        ])
 
         public_id = f"absora/{username}/{instance_id}/server.tar.gz"
         
