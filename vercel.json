@@ -4,12 +4,22 @@
   "buildCommand": null,
   "outputDirectory": "public",
   "functions": {
-    "api/software.js": {
+    "api/catalog_router.js": {
       "includeFiles": "api/_data/**"
     }
   },
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/api/auth", "destination": "/api/auth_router" },
+    { "source": "/api/ws_auth", "destination": "/api/auth_router" },
+    { "source": "/api/worker_api", "destination": "/api/worker_router" },
+    { "source": "/api/worker_poll", "destination": "/api/worker_router" },
+    { "source": "/api/instances", "destination": "/api/instances_router" },
+    { "source": "/api/dispatch", "destination": "/api/instances_router" },
+    { "source": "/api/status", "destination": "/api/instances_router" },
+    { "source": "/api/renew", "destination": "/api/instances_router" },
+    { "source": "/api/software", "destination": "/api/catalog_router" },
+    { "source": "/api/plugins", "destination": "/api/catalog_router" },
+    { "source": "/api/plans_public", "destination": "/api/catalog_router" },
     { "source": "/(.*)", "destination": "/$1" }
   ]
 }
