@@ -1,6 +1,6 @@
-import { queryD1, executeD1 } from './db.js';
-import { requireAuth, sendSuccess, sendError } from './middleware.js';
-import { getSessionDurationSecs } from './plans.js';
+import { queryD1, executeD1 } from '../_lib/db.js';
+import { requireAuth, sendSuccess, sendError } from '../_lib/middleware.js';
+import { getSessionDurationSecs } from '../_lib/plans.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
