@@ -137,17 +137,42 @@ def download_server_data(username, instance_id, server_dir):
         print("No valid CLOUDINARY_URL set, skipping persistence.")
         return
 
-    public_id = f"absora/{username}/{instance_id}/server.tar.gz"
     tar_path = f"/home/runner/backups/server_{instance_id}.tar.gz"
     
     try:
+        # Check for meta.json (chunked backup)
+        meta_url = f"https://res.cloudinary.com/{cld['cloud_name']}/raw/upload/absora/{username}/{instance_id}/meta.json"
+        meta_resp = requests.get(meta_url)
+        
+        if meta_resp.ok:
+            meta = meta_resp.json()
+            num_parts = meta.get("parts", 0)
+            print(f"[{instance_id}] Found chunked backup ({num_parts} parts). Downloading...")
+            
+            with open(tar_path, "wb") as f_out:
+                for i in range(num_parts):
+                    part_url = f"https://res.cloudinary.com/{cld['cloud_name']}/raw/upload/absora/{username}/{instance_id}/part_{i}"
+                    part_resp = requests.get(part_url)
+                    if part_resp.ok:
+                        f_out.write(part_resp.content)
+                    else:
+                        raise Exception(f"Failed to download part {i}")
+                        
+            print(f"[{instance_id}] Reassembled chunked backup. Extracting...")
+            subprocess.run(["tar", "-xzf", tar_path, "-C", server_dir])
+            print(f"[{instance_id}] Extraction complete.")
+            os.remove(tar_path)
+            return
+
+        # Fallback to old single-file format
+        public_id = f"absora/{username}/{instance_id}/server.tar.gz"
         url = f"https://res.cloudinary.com/{cld['cloud_name']}/raw/upload/{public_id}"
         resp = requests.get(url, stream=True)
         if resp.status_code == 200:
             with open(tar_path, 'wb') as f:
                 for chunk in resp.iter_content(chunk_size=8192):
                     f.write(chunk)
-            print(f"[{instance_id}] Found existing backup. Extracting...")
+            print(f"[{instance_id}] Found legacy backup. Extracting...")
             subprocess.run(["tar", "-xzf", tar_path, "-C", server_dir])
             print(f"[{instance_id}] Extraction complete.")
             os.remove(tar_path)
@@ -182,32 +207,49 @@ def upload_server_data(username, instance_id, server_dir):
             "."
         ])
 
-        public_id = f"absora/{username}/{instance_id}/server.tar.gz"
-        
         cloudinary.config(
             cloud_name=cld['cloud_name'],
             api_key=cld['api_key'],
             api_secret=cld['api_secret']
         )
         
-        print(f"[{instance_id}] Uploading large file in chunks...")
-        resp = cloudinary.uploader.upload_large(
-            tar_path,
+        split_dir = f"/home/runner/backups/split_{instance_id}"
+        os.makedirs(split_dir, exist_ok=True)
+        
+        print(f"[{instance_id}] Splitting backup to bypass 10MB limit...")
+        subprocess.run(["split", "-b", "9M", tar_path, f"{split_dir}/part_"])
+        
+        parts = sorted(os.listdir(split_dir))
+        print(f"[{instance_id}] Uploading {len(parts)} chunks to Cloudinary...")
+        
+        for i, part in enumerate(parts):
+            part_path = os.path.join(split_dir, part)
+            cloudinary.uploader.upload(
+                part_path,
+                resource_type="raw",
+                public_id=f"absora/{username}/{instance_id}/part_{i}"
+            )
+            
+        # Write and upload metadata
+        meta_path = f"{split_dir}/meta.json"
+        with open(meta_path, "w") as f:
+            json.dump({"parts": len(parts)}, f)
+            
+        cloudinary.uploader.upload(
+            meta_path,
             resource_type="raw",
-            public_id=public_id,
-            chunk_size=20000000 # 20MB chunks
+            public_id=f"absora/{username}/{instance_id}/meta.json"
         )
         
-        if resp.get('public_id'):
-            print(f"[{instance_id}] Persistence saved to Cloudinary successfully.")
-        else:
-            print(f"[{instance_id}] Persistence upload failed: {resp}")
+        print(f"[{instance_id}] Persistence saved to Cloudinary successfully.")
 
     except Exception as e:
         print(f"[{instance_id}] Persistence upload failed: {e}")
     finally:
         if os.path.exists(tar_path):
             os.remove(tar_path)
+        if 'split_dir' in locals() and os.path.exists(split_dir):
+            shutil.rmtree(split_dir)
 
 
 # ── Heartbeat & Poll Loop ──
