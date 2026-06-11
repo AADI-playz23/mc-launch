@@ -561,8 +561,8 @@ def start_game_server(task):
         image_name,
         "java",
     ] + aikar_flags + [
-        f"-Dserver.port={internal_port}",
         "-jar", "server.jar", "nogui",
+        "--port", str(internal_port)
     ]
 
     # PTY for console streaming
