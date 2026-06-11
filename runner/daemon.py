@@ -168,9 +168,6 @@ def upload_server_data(username, instance_id, server_dir):
     tar_path = f"/home/runner/backups/server_{instance_id}.tar.gz"
     
     try:
-        # Docker runs as root, so files inside server_dir might be owned by root.
-        # We need to take ownership before we can tar them!
-        subprocess.run(["sudo", "chown", "-R", f"{os.getuid()}:{os.getgid()}", server_dir])
         
         # Compress server directory (exclude giant static files to fit in 10MB limit)
         subprocess.run([
@@ -567,6 +564,7 @@ def start_game_server(task):
         "docker", "run",
         "-i", "--rm",
         "--name", f"mc_{instance_id}",
+        "--user", f"{os.getuid()}:{os.getgid()}",
         "-p", f"{internal_port}:{internal_port}",
         "-v", f"{server_dir}:/server",
         "-w", "/server",
