@@ -27,11 +27,14 @@ export default async function handler(req, res) {
   });
   if (!valid) return;
 
-  const { op, username, password } = req.body;
+  const { op, username, password, tos = false } = req.body;
   const usernameLower = username.toLowerCase();
 
   try {
     if (op === 'register') {
+      if (!tos) {
+        return sendError(res, 400, 'You must agree to the Terms of Service, Privacy Policy, and Refund Policy.');
+      }
       const existingUser = await queryD1('SELECT id FROM users WHERE username = ?', [usernameLower]);
       if (existingUser && existingUser.length > 0) {
         return sendError(res, 400, 'Username already exists');
@@ -39,7 +42,7 @@ export default async function handler(req, res) {
 
       const hashedPassword = await bcrypt.hash(password, 10);
       await executeD1(
-        'INSERT INTO users (username, password, plan) VALUES (?, ?, ?)',
+        'INSERT INTO users (username, password, plan, tos_accepted) VALUES (?, ?, ?, 1)',
         [usernameLower, hashedPassword, 'free']
       );
 
@@ -58,8 +61,23 @@ export default async function handler(req, res) {
         return sendError(res, 401, 'Invalid credentials');
       }
 
-      if (user.banned === 1) {
-        return sendError(res, 403, 'Account banned');
+      const isBanned = await queryD1('SELECT id FROM bans WHERE username = ? AND service = ?', [usernameLower, 'minecraft']);
+      if (isBanned && isBanned.length > 0) {
+        return sendError(res, 403, 'Your account has been permanently banned from the Minecraft hosting service for policy violations.');
+      }
+
+      const lockedUntil = parseInt(user.locked_until || 0);
+      if (lockedUntil > Math.floor(Date.now() / 1000)) {
+        const warnResult = await queryD1('SELECT reason, screenshot_proof FROM warns WHERE username = ? ORDER BY created_at DESC LIMIT 1', [usernameLower]);
+        const latestWarn = warnResult[0] || {};
+        return res.status(403).json({
+          status: 'locked',
+          error: 'Your account is temporarily locked for 24 hours.',
+          locked_until: lockedUntil,
+          reason: latestWarn.reason || 'Policy violation detected',
+          proof: latestWarn.screenshot_proof || '',
+          support_link: 'http://absoracloud.fanclub.rocks'
+        });
       }
 
       const token = jwt.sign(
