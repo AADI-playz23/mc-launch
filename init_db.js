@@ -24,10 +24,45 @@ async function initSchema() {
             plan TEXT DEFAULT 'free',
             is_admin INTEGER DEFAULT 0,
             banned INTEGER DEFAULT 0,
+            tos_accepted INTEGER DEFAULT 1,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
           )
         `);
         console.log("✓ users table");
+
+        try {
+            await executeD1(`ALTER TABLE users ADD COLUMN tos_accepted INTEGER DEFAULT 1`);
+            console.log("✓ added tos_accepted column migration");
+        } catch (e) {}
+
+        try {
+            await executeD1(`ALTER TABLE users ADD COLUMN locked_until INTEGER DEFAULT 0`);
+            console.log("✓ added locked_until column migration");
+        } catch (e) {}
+
+        await executeD1(`
+          CREATE TABLE IF NOT EXISTS warns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            service TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            screenshot_proof TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+        console.log("✓ warns table");
+
+        await executeD1(`
+          CREATE TABLE IF NOT EXISTS bans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            service TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            banned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(username, service)
+          )
+        `);
+        console.log("✓ bans table");
 
         await executeD1(`
           CREATE TABLE IF NOT EXISTS instances (
