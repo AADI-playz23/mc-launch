@@ -16,6 +16,21 @@ export default async function handler(req, res) {
   const user = requireAuth(req, res);
   if (!user) return;
 
+  // Check ban/lockout state in database
+  const isBanned = await queryD1('SELECT id FROM bans WHERE username = ? AND service = ?', [user.username, 'minecraft']);
+  if (isBanned && isBanned.length > 0) {
+    return sendError(res, 403, 'Your account has been permanently banned from the Minecraft hosting service for policy violations.');
+  }
+
+  const users = await queryD1('SELECT locked_until FROM users WHERE username = ?', [user.username]);
+  if (users && users.length > 0) {
+    const uRow = users[0];
+    const lockedUntil = parseInt(uRow.locked_until || 0);
+    if (lockedUntil > Math.floor(Date.now() / 1000)) {
+      return sendError(res, 403, 'Your account is temporarily locked for 24 hours for policy violations.');
+    }
+  }
+
   const { instance_id, force_trigger } = req.body;
   if (!instance_id) {
     return sendError(res, 400, 'instance_id required');
