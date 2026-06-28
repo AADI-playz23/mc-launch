@@ -246,6 +246,54 @@
             transform: rotate(45deg);
             letter-spacing: 1px;
         }
+
+        /* --- RESPONSIVE MEDIA QUERIES --- */
+        @media (max-width: 768px) {
+            nav {
+                padding: 1rem 1.5rem;
+                flex-direction: column;
+                gap: 12px;
+                text-align: center;
+            }
+            #nav-actions {
+                display: flex;
+                flex-wrap: wrap;
+                justify-content: center;
+                gap: 10px;
+            }
+            .nav-btn {
+                margin-right: 0 !important;
+                font-size: 0.9rem;
+            }
+            .page {
+                padding: 1.5rem 1rem;
+            }
+            .panel-wide h2 {
+                font-size: 2.2rem !important;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .panel {
+                padding: 1.8rem 1.2rem;
+                border-radius: 12px;
+            }
+            h2 {
+                font-size: 1.8rem !important;
+            }
+            .btn {
+                padding: 0.75rem;
+                font-size: 0.9rem;
+            }
+            .pricing-grid {
+                gap: 1rem;
+            }
+            .plan-card {
+                width: 100%;
+                max-width: 320px;
+                padding: 2rem 1.5rem;
+            }
+        }
     </style>
 </head>
 
