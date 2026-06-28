@@ -32,6 +32,49 @@
         .btn-p:hover { filter: brightness(1.2); transform: scale(1.02); }
         .btn-d { background: transparent; border: 1px solid var(--danger); color: var(--danger); margin-top: 1rem; }
         .btn-d:hover { background: rgba(239, 68, 68, 0.1); }
+
+        /* --- RESPONSIVE MEDIA QUERIES --- */
+        @media (max-width: 768px) {
+            nav {
+                padding: 1rem 1.5rem;
+            }
+            .container {
+                margin: 1.5rem auto;
+                padding: 0 1rem;
+            }
+            .header-flex {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 0.8rem;
+                margin-bottom: 2rem;
+            }
+            .plan-badge {
+                font-size: 1.1rem;
+                padding: 0.4rem 1rem;
+                border-radius: 8px;
+            }
+            .grid {
+                grid-template-columns: 1fr;
+                gap: 1.2rem;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .card {
+                padding: 1.5rem 1.2rem;
+                border-radius: 16px;
+            }
+            .card h3 {
+                font-size: 1.48rem !important;
+            }
+            .btn {
+                padding: 0.8rem 1.2rem;
+                font-size: 0.95rem;
+            }
+            code {
+                font-size: 0.85rem !important;
+            }
+        }
     </style>
 </head>
 
