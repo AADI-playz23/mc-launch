@@ -434,6 +434,16 @@
             <form onsubmit="handleAuth(event)">
                 <input type="text" id="username" placeholder="Pilot Username" required>
                 <input type="password" id="password" placeholder="Passcode" required>
+                <div id="tos-group" style="display:none; margin: 8px 0 14px 0;">
+                    <label style="display:flex; align-items:flex-start; gap:10px; font-size:0.82rem; color:var(--text-muted,#94a3b8); cursor:pointer; line-height:1.5;">
+                        <input type="checkbox" id="tos-check" style="margin-top:3px; accent-color:#6366f1; width:15px; height:15px; flex-shrink:0;">
+                        <span>I agree to the
+                            <a href="https://absoracloud.free.je/tos.html" target="_blank" style="color:#6366f1; text-decoration:underline;">Terms of Service</a>,
+                            <a href="https://absoracloud.free.je/privacy.html" target="_blank" style="color:#6366f1; text-decoration:underline;">Privacy Policy</a>, and
+                            <a href="https://absoracloud.free.je/refund.html" target="_blank" style="color:#6366f1; text-decoration:underline;">Refund Policy</a>.
+                        </span>
+                    </label>
+                </div>
                 <button type="submit" id="login-btn" class="btn">Authenticate</button>
             </form>
         </div>
@@ -454,6 +464,8 @@
             mode = newMode;
             document.getElementById('login-btn').innerText = mode === 'login' ? 'Authenticate' : 'Register Pilot';
             document.getElementById('auth-msg').innerText = mode === 'login' ? 'Welcome back.' : 'Create your Absora account.';
+            document.getElementById('tos-group').style.display = mode === 'login' ? 'none' : 'block';
+            document.getElementById('tos-check').checked = false;
         }
 
         async function handleAuth(e) {
@@ -466,6 +478,14 @@
             btn.disabled = true; 
             btn.innerText = "Encrypting Handshake..."; 
             msgBox.style.color = "var(--text-muted)";
+
+            if (mode === 'register' && !document.getElementById('tos-check').checked) {
+                msgBox.innerText = 'Please agree to the Terms of Service, Privacy Policy, and Refund Policy.';
+                msgBox.style.color = 'var(--danger)';
+                btn.disabled = false;
+                btn.innerText = 'Register Pilot';
+                return;
+            }
             
             try {
                 const response = await fetch('/api/auth', { 
