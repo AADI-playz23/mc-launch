@@ -382,6 +382,7 @@
         let currentSessionId = null;
         let wsToken = null;
         let propMap = {};
+        let statsInterval = null;
 
         function tab(id, btn) {
             document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
@@ -482,11 +483,21 @@
                     setConnStatus('online', 'Connected');
                     ws.send(JSON.stringify({ token: wsToken }));
                     ws.send(JSON.stringify({ type: 'file_read', path: 'server.properties' }));
+                    if (statsInterval) clearInterval(statsInterval);
+                    statsInterval = setInterval(() => {
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({ type: 'stats' }));
+                        }
+                    }, 3000);
                 };
                 
                 ws.onmessage = handleWsMessage;
                 
                 ws.onclose = async () => {
+                    if (statsInterval) {
+                        clearInterval(statsInterval);
+                        statsInterval = null;
+                    }
                     setConnStatus('offline', 'Disconnected');
                     document.getElementById('ip-bar').style.display = 'none';
                     term.writeln('\n\x1b[1;31m[System]\x1b[0m Connection to runner lost. Checking status...');
@@ -535,6 +546,14 @@
             } else if (msg.type === 'unzip_success') {
                 alert("Extracted successfully.");
                 loadFiles(cPath);
+            } else if (msg.type === 'stats_result') {
+                document.getElementById('c-txt').innerText = `${msg.cpu}%`;
+                document.getElementById('c-bar').style.width = `${msg.cpu}%`;
+                const ramUsed = msg.ram;
+                const ramMax = msg.max_ram || 4096;
+                const ramPercent = Math.min(100, Math.max(0, (ramUsed / ramMax) * 100));
+                document.getElementById('r-txt').innerText = `${ramUsed} MB / ${ramMax} MB`;
+                document.getElementById('r-bar').style.width = `${ramPercent}%`;
             }
         }
 
