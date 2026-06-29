@@ -491,7 +491,7 @@
                 const response = await fetch('/api/auth', { 
                     method: 'POST', 
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ op: mode, username: user, password: pass })
+                    body: JSON.stringify({ op: mode, username: user, password: pass, ...(mode === 'register' ? { tos: true } : {}) })
                 });
                 
                 const data = await response.json();
